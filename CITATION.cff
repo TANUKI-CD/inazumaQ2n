@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use inazumaq2n in your work, please cite it using this metadata."
+type: software
+title: "inazumaq2n: a fast implementation of the Q2n image quality index"
+abstract: >-
+  A Python package that evaluates the Q2n hypercomplex image quality index
+  for images with any number of bands from real moments of the blocks, with
+  compiled kernels that are selected for the processor at run time and one
+  matrix product per tile, without forming a hypercomplex product of pixels.
+authors:
+  - family-names: Lemley
+    given-names: Harrison
+version: 0.1.0
+license: MIT
+repository-code: "https://git.tanuki-cd.com/algebraity/inazumaq2n"
+keywords:
+  - Q2n
+  - image quality assessment
+  - multispectral images
+  - hyperspectral images
+  - pansharpening
+  - Cayley-Dickson algebras
+  - hypercomplex numbers

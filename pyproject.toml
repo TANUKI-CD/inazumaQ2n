@@ -1,0 +1,122 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inazumaq2n"
+dynamic = ["version"]
+description = "A fast implementation of the Q2n image quality index for multiband images"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Harrison Lemley" },
+]
+keywords = [
+    "q2n",
+    "image-quality",
+    "hyperspectral",
+    "pansharpening",
+    "cayley-dickson",
+    "hypercomplex",
+    "scientific-computing",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.urls]
+Homepage = "https://git.tanuki-cd.com/algebraity/inazumaq2n"
+Source = "https://git.tanuki-cd.com/algebraity/inazumaq2n"
+Documentation = "https://git.tanuki-cd.com/algebraity/inazumaq2n/src/branch/main/docs"
+Changelog = "https://git.tanuki-cd.com/algebraity/inazumaq2n/src/branch/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+# Intel MKL as the matrix-product library for images with many bands
+mkl = [
+    "mkl>=2024; platform_system == 'Linux' and platform_machine == 'x86_64'",
+]
+test = [
+    "pytest>=8",
+]
+# The benchmark and the stability study: pyfastcd for the comparison,
+# threadpoolctl for the thread limits, Matplotlib for the charts
+benchmark = [
+    "matplotlib>=3.8",
+    "pyfastcd>=1.4.0,<2",
+    "threadpoolctl>=3",
+]
+dev = [
+    "build>=1.2",
+    "matplotlib>=3.8",
+    "mypy>=1.11",
+    "pyfastcd>=1.4.0,<2",
+    "pytest>=8",
+    "ruff>=0.8",
+    "threadpoolctl>=3",
+    "twine>=5",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+inazumaq2n = ["py.typed", "*.pyi"]
+
+# The C sources are compiled into the wheel, not shipped beside the module
+[tool.setuptools.exclude-package-data]
+inazumaq2n = ["*.c", "*.h"]
+
+# The version is defined once, in src/inazumaq2n/_version.py
+[tool.setuptools.dynamic]
+version = { attr = "inazumaq2n._version.__version__" }
+
+# Wheels for the release workflow. Free-threaded builds are skipped because
+# the extension module does not declare free-threading support, and CPython
+# 3.15 because CI does not test it.
+[tool.cibuildwheel]
+archs = ["auto64"]
+skip = ["cp31?t-*", "cp315-*"]
+test-requires = ["pytest>=8"]
+test-command = "python -m pytest -q {project}/tests"
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests", "benchmarks"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# The benchmark drivers keep long report strings on one line
+[tool.ruff.lint.per-file-ignores]
+"benchmarks/*.py" = ["E501"]
+
+[tool.mypy]
+strict = true
+packages = ["inazumaq2n"]
+mypy_path = "src"

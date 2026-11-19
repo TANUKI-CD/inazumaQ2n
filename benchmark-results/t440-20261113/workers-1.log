@@ -1,0 +1,12 @@
+gray 512x512, uint8: one-shot 0.493 ms, plan 0.393 ms
+RGB 512x512, uint8: one-shot 0.768 ms, plan 0.710 ms
+RGB 512x512, uint8, block 64, stride 32: one-shot 0.873 ms, plan 0.830 ms
+4 bands 512x512, uint16: one-shot 1.195 ms, plan 1.136 ms
+8 bands 512x512, uint16: one-shot 12.095 ms, plan 12.045 ms, plan, numpy 11.863 ms
+16 bands 512x512, float64: one-shot 21.652 ms, plan 21.391 ms, plan, numpy 21.536 ms
+16 bands 512x512, float64, block 64, stride 32: one-shot 23.929 ms, plan 24.274 ms, plan, numpy 23.985 ms
+32 bands 256x256, float64: one-shot 12.438 ms, plan 15.874 ms, plan, numpy 18.081 ms
+32 bands 256x256, float64, block 64, stride 32: one-shot 19.091 ms, plan 15.102 ms, plan, numpy 15.589 ms
+159 bands 200x200, float64: one-shot 75.727 ms, plan 75.413 ms, plan, numpy 88.298 ms
+159 bands 200x200, float64, block 64, stride 32: one-shot 108.001 ms, plan 111.097 ms, plan, numpy 131.313 ms
+wrote benchmark-results/t440-20261113/workers-1.json
