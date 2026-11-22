@@ -100,8 +100,8 @@ score = q2n(reference, test, workers=4)
 ```
 
 `workers` divides the tiles of the image among threads. It defaults to one.
-With more than four bands and NumPy as the matrix-product library, the
-library has threads of its own, and the two levels multiply. Set the
+With more than four bands, the moments and NumPy as the matrix-product
+library, the library has threads of its own, and the two levels multiply. Set the
 library to one thread in that case, with `OPENBLAS_NUM_THREADS=1` in the
 environment or with
 [threadpoolctl](https://github.com/joblib/threadpoolctl):
@@ -123,15 +123,38 @@ from inazumaq2n import runtime_info
 
 runtime_info()
 # {'version': '0.1.0', 'simd': 'avx512', 'direct_kernels': True,
-#  'backend': 'mkl', 'backend_version': '2026.2.1', 'numpy': '2.5.4'}
+#  'backend': 'mkl', 'backend_version': '2026.2.1', 'numpy': '2.5.4',
+#  'fastcd': '1.5.0', 'fastcd_kernel': 'avx512'}
 ```
 
 `simd` is the instruction set of the compiled kernels, chosen for the
 processor when the package is imported. `backend` is the matrix-product
-library that `backend="auto"` uses. Pass `backend="numpy"` to `q2n`,
-`q2n_map` or `Q2nPlan` to avoid MKL, for example to compare scores between
-machines that do not all have it: the two libraries round differently, so
-their scores can differ in the last digits.
+library that `backend="auto"` uses, and `fastcd_kernel` the kernel that
+fastCD runs its fused sums with.
+
+## Two algorithms
+
+```python
+score = q2n(reference, test)                        # algorithm="auto"
+score = q2n(reference, test, algorithm="moments")   # real cross moments
+score = q2n(reference, test, algorithm="fastcd")    # fused sums of fastCD
+
+with Q2nPlan(reference.shape) as plan:
+    plan.algorithm                                  # "moments" or "fastcd"
+```
+
+The package evaluates a block either from real cross moments or from one
+fused sum of products of fastCD, and by default selects the one that was
+measured to be faster for the image and the blocks: the fused sums for
+images with eight bands or more whose blocks do not overlap, and for
+overlapping blocks in high dimensions; see the
+[API reference](api.md#algorithms).
+
+The two give the same index to rounding error, but not the same bits, and
+which one `"auto"` selects depends on the processor. To compare scores
+between machines to the last digit, pass `algorithm` explicitly, and with
+`algorithm="moments"` also `backend="numpy"`: MKL and the library of NumPy
+round differently too.
 
 ## Things to know about the index
 

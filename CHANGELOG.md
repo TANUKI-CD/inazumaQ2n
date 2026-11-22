@@ -43,3 +43,34 @@ version is defined in `src/inazumaq2n/_version.py`.
 - A stability study against an exact reference (`benchmarks/stability*.py`,
   `tests/exact.py`), archived in `benchmark-results/stability-20261113/`,
   and `tools/check_archives.py`.
+- `algorithm`: a second evaluation of the covariance of a block, as one
+  fused sum of products of fastCD, in `O(N log N)` operations per pixel for
+  an algebra of dimension `N`, beside the real cross moments.
+  `algorithm="fastcd"` and `algorithm="moments"` select one, and the default
+  `"auto"` selects the one that was measured to be faster for the band
+  count, the overlap of the blocks and the processor. `Q2nPlan.algorithm`
+  reports the choice. Overlapping blocks whose size is a multiple of the
+  stride share the records and the statistics of their tiles, and only the
+  sum is repeated for each block.
+- fastCD 1.5.0, compiled into the extension module from the snapshot in
+  `vendor/fastcd`, which `tools/vendor_fastcd.py` writes and verifies.
+  `runtime_info` reports its version and the kernel of its fused sums.
+- The `algorithms` protocol of `benchmarks/benchmark.py`, which times the
+  moments, the fused sums and the recursive product of the reference
+  toolboxes (`benchmarks/toolbox.py`) over the dimension, the band count,
+  the overlap, the sample type, the block size and the number of workers,
+  archived in `benchmark-results/fastcd-20261121/`.
+- `benchmarks/toolboxes.py` and the `toolboxes` protocol of the benchmark:
+  the `q2n` of the MATLAB pansharpening toolbox, fetched at a pinned commit,
+  verified and run unchanged under GNU Octave, and two Python ports of it,
+  PanCollection and the hyperspectral pansharpening toolbox, beside the
+  package. `benchmarks/test_toolboxes.py` requires the value of every block
+  by the MATLAB toolbox to agree with the package to `1e-12`, for both
+  algorithms, and records how close each port is; the measurement is
+  archived in `benchmark-results/toolboxes-20261121/` and tabulated in the
+  README.
+- Methods F and G of the stability study, the fused sums of a block and of
+  a block merged from four tiles. The study was run again with them and is
+  archived in `benchmark-results/stability-20261121/`, which
+  `docs/stability.md` now presents; it reproduces every figure of the study
+  of 2026-11-13 for the methods that study measured.

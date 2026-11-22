@@ -160,6 +160,41 @@ def test_measured_methods_are_accurate():
     assert row["precision_check"] < 1e-50
     assert set(row["comparisons"]) == set(stability.COMPARED)
     assert row["marked"] is False
+    assert {"I", "F"} <= set(row["methods"])
+
+
+def test_fused_sums_are_guarded_like_the_moments():
+    for family in ("zero_mean", "overflow", "scaled_down", "offset_1e9"):
+        row = stability.run_case(family, 5, 8, 0, 4, 60, check=False)
+        assert row["marked"]
+        # A marked block is evaluated from its samples whatever the algorithm
+        assert row["methods"]["F"]["value"] == row["methods"]["I"]["value"]
+        assert row["comparisons"]["F"] == "tied"
+        # And so is the block merged from tiles
+        assert row["methods"]["G"]["value"] == row["methods"]["T"]["value"]
+
+
+def test_studies_without_fused_sums_render_as_before():
+    rows = [
+        stability.run_case("uniform", 3, 8, k, 4, 60, check=False) for k in range(2)
+    ]
+    document = {
+        "completed": True,
+        "profile": "smoke",
+        "samples": rows,
+        "corpus": {"families": {"uniform": ""}},
+    }
+    current = stability_report.render(document)
+    assert "I / F / Q / D" in current and "Fused sums of fastCD" in current
+    assert "median eta I / F / G" in current
+    assert stability_report.measured(document) == stability.METHODS
+    for row in rows:
+        for method in ("F", "G"):
+            del row["methods"][method], row["comparisons"][method]
+    legacy = stability_report.render(document)
+    assert "F" not in stability_report.measured(document)
+    assert "I / Q / D" in legacy and "fastCD" not in legacy
+    assert "typical_median_eta" in stability_report.key_figures(document)
 
 
 def test_hazards_are_handled_by_the_package():

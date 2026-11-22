@@ -1,0 +1,47 @@
+{
+ "project": "fastCD",
+ "repository": "https://git.tanuki-cd.com/algebraity/fastCD",
+ "version": "1.5.0",
+ "commit": "95fe17aeb93148bb0b07398bcb8b3a0720a2a440",
+ "sources": [
+  "src/fastcd.c",
+  "src/quasilinear.c",
+  "src/cariow_cariowa.c",
+  "src/direct.c",
+  "src/fused_sum.c"
+ ],
+ "simd_sources": {
+  "src/fused_sum_avx2.c": [
+   "-mavx2",
+   "-mfma"
+  ],
+  "src/fused_sum_avx512.c": [
+   "-mavx512f"
+  ]
+ },
+ "files_sha256": {
+  "LICENSE": "56d4aa04e66de6a2c52beab93ff77ac8607d2f2aed1a650cbf09245e189a053f",
+  "src/fastcd.c": "319524a8f9c4858cf2bc90f4da215863cc2b6f532cb3a24fb7333467b56f7a04",
+  "src/quasilinear.c": "a9886495e27c790d346a9db4af6a26a8f8feac7fb9732d536b3f8767e1e1200a",
+  "src/cariow_cariowa.c": "a8d1c325b109ac45520f8a326f9db49f514b019a23fc3914b8efc9c713af3f68",
+  "src/direct.c": "b7f1034db556e9b54a34dff689cc3893ec136db934b90e4e9919c22c70e70e01",
+  "src/fused_sum.c": "7632ab04f0e42bde2e4d3cbd2cf7ceeb4f5c7d61a8a9a4a214bd9f7011fa3ec7",
+  "src/fused_sum_avx2.c": "3d462ab97ba3e71ee46710995caab63bc25a08abb90bc623b61c9294371fc383",
+  "src/fused_sum_avx512.c": "e21cc797015f169205acaf6dd30ce315bad7cd14a41577652b3e2cf8bc87eadc",
+  "include/fastcd/fastcd.h": "0a257db6f90e87bb977db354a8943cc064cb98f7182f3cc327310772b2e83ae9",
+  "src/balanced_sum.h": "cb2ba14c5ffe0b60294a697c5d886f52b4561bfa2cb88f2a0b1251270d81ee92",
+  "src/cariow_cariowa_impl.h": "ed3ccddd973831d88f6a9437a34b18fd401a52fdf0c67c283b7e6ffc73650c8a",
+  "src/direct_impl.h": "890b6e31d5f1e954d065f79c1db019a7aa14643d4b30c88a9b08822bd6d3da85",
+  "src/fastcd_internal.h": "05a0fa0320867dd01a6a777d6db8bb4ff03916e784d8680030841f14add7e787",
+  "src/fused_sum.h": "5f011ccca3181485553bb85ab35df11a2dd64add5691742b4ed31202f7e28e31",
+  "src/fused_sum_impl.h": "592bd0363696997138a21687071f5bca84fef5cc6fd572c5d4d7840a5397d26b",
+  "src/pair.h": "152845382e13d4f260c5244208bc077a52b354f8cf71197cbdc02076f4c13f7f",
+  "src/quasilinear_impl.h": "66c16c94922eb493fba233c9968a03295bd0439bb1126c85fefe04b7b3cf2e5f",
+  "src/quasilinear_simd.h": "4795e1513c2539e2e8879178d9808469ebe70ebeaa0957fe7a0e0b7dcad83432",
+  "src/generated/cariow_cariowa_kernels.h": "4d28396cc5bfeac852d44005275dd94b251eced9cb032f2731723ce46a47bf79",
+  "src/generated/cariow_cariowa_masks.h": "3a5753551f5d89e05fe7ff9381d76384130b1d5546abb5b74e70b11ffd12046d",
+  "src/generated/direct_kernels.h": "898d944d8df4442e5a5d0590ab18472acc661bf5108a9596276a8eb2c0601408",
+  "src/generated/fused_sum_kernels.h": "6c8699557d60114cc5dd412f64851e279f374579ec84309a838757f93d04d1f5",
+  "src/generated/quasilinear_kernels.h": "c24a621d5e505089efc20da30b0c7eda25329551916ed705643f1b1222f3ffce"
+ }
+}

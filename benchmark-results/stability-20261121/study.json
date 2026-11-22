@@ -1,0 +1,116 @@
+{
+  "schema": "inazumaq2n-stability-study-v1",
+  "date": "2026-11-21",
+  "profile": "full",
+  "seed": 20261113,
+  "digits": 100,
+  "jobs": 16,
+  "command": "python benchmarks/stability_study.py --profile full --seed 20261113 --jobs 16 --output benchmark-results/stability-20261121 --update-docs",
+  "environment": {
+    "cpu_model": "Intel(R) Xeon(R) Gold 6148 CPU @ 2.40GHz",
+    "platform": "Linux-7.2.11-arch1-1-x86_64-with-glibc2.44",
+    "python": "3.14.8 (main, Oct  2 2026, 10:23:31) [GCC 16.2.1 20260810]",
+    "numpy": "2.5.4",
+    "pyfastcd": "1.4.0",
+    "inazumaq2n": "0.1.0",
+    "runtime": {
+      "version": "0.1.0",
+      "simd": "avx512",
+      "direct_kernels": true,
+      "backend": "mkl",
+      "backend_version": "2026.2.1",
+      "numpy": "2.5.4",
+      "fastcd": "1.5.0",
+      "fastcd_kernel": "avx512"
+    },
+    "matplotlib": "3.11.2"
+  },
+  "oracle_validation": {
+    "checks": 162,
+    "max_relative_difference": 6.5148e-96,
+    "tolerance": 1e-50
+  },
+  "precision_checks": {
+    "cases": 240,
+    "digits": 200,
+    "max_relative_difference": 3.2722286957862338e-99
+  },
+  "corpus": {
+    "cases": 8988,
+    "families": {
+      "uniform": "uniform samples in [0, 255), test = reference + N(0, 20^2)",
+      "gaussian": "Gaussian bands with their own means and spreads, test = reference + N(0, 10^2)",
+      "uint8": "integers in [0, 255], test = reference + rounded N(0, 20^2), clipped",
+      "uint16": "integers in [0, 65535], test = reference + rounded N(0, 2000^2), clipped",
+      "identical": "test = reference, uniform samples",
+      "affine": "test = 0.8 reference + 2, uniform samples",
+      "inverted": "test = 255 - reference, uniform samples",
+      "independent": "independent uniform reference and test",
+      "offset_1e3": "reference = 1e3 + U[0, 1), test = reference + N(0, 0.1^2)",
+      "offset_1e6": "reference = 1e6 + U[0, 1), test = reference + N(0, 0.1^2)",
+      "offset_1e9": "reference = 1e9 + U[0, 1), test = reference + N(0, 0.1^2)",
+      "offset_1e12": "reference = 1e12 + U[0, 1), test = reference + N(0, 0.1^2)",
+      "zero_mean": "reference bands of exactly zero mean in random pixel order, test = 0.8 reference + 2",
+      "near_zero_mean": "zero_mean with one sample changed by a relative 2^-40",
+      "constant_integer": "uniform, with reference band 0 constant at 7",
+      "constant_fraction": "uniform, with reference band 0 constant at 0.1",
+      "scaled_down": "uniform scaled by 2^-530; products of samples are subnormal",
+      "scaled_up": "uniform scaled by 2^490",
+      "overflow": "uniform scaled by 2^515; squares of deviations overflow"
+    },
+    "bands": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      8,
+      16,
+      32,
+      64,
+      128,
+      159,
+      256
+    ],
+    "sides": [
+      8,
+      16,
+      32,
+      64
+    ]
+  },
+  "steps": {
+    "accuracy": 16.387682428001426,
+    "tables": 0.8418318940093741,
+    "plots": 2.159195134998299
+  },
+  "source": {
+    "files_sha256": {
+      "benchmarks/baseline.py": "e9fc6471a1b0ceda1b431b91e409e4d4ab1f7812f7dec7c0097d456a6f880983",
+      "src/inazumaq2n/__init__.py": "b492ed167ea3ed267a18660bae085efccd5aa85120fbaae71e29bd87657cdae1",
+      "src/inazumaq2n/_auto.py": "44d1b13775cae173dc45928fd2cccaf490256c1b375b89bb01b100f97efb22e9",
+      "src/inazumaq2n/_blas.py": "c8e307b8d5092feca7d470d381f53b2ea54491f3acdd586062161a6255e5e133",
+      "src/inazumaq2n/_core.c": "83037fac6ba54a3dd089f41220a12717670426c27afd4bd09df379b45dc37bd5",
+      "src/inazumaq2n/_core.pyi": "9a9d9c045dfa7903543af9f7fdd22b74cd80c99e33bf918c6a065fb3c44069cc",
+      "src/inazumaq2n/_direct.h": "30c0f9b14412e6758545c2c784fe4bc5076b4c372aea64e4fc194ac451ab913a",
+      "src/inazumaq2n/_fallback.py": "756f2c66eab5756f8016002aaedf342765fead2b472d8c4a22e1001785e1c203",
+      "src/inazumaq2n/_fused.h": "ca09e6818c936ed26890ff1edb9fc03b77f4ef6d284a14d8d369bd3278d44552",
+      "src/inazumaq2n/_isa.h": "df94432504647004bb7e7548e5b6723b99431b89021193faa933c291c2f649b6",
+      "src/inazumaq2n/_plan.py": "ed9323e1e4552a4d30a16a397228f53d0765981a6c021959d9ebd90d631494f9",
+      "src/inazumaq2n/_prepare.h": "800cd02581209007bad7859e2ea72a49baa09a94e446aacb559ea25e2eb5bd82",
+      "src/inazumaq2n/_version.py": "dc19b60d5c8a9d7c4c870a72f173138b7678a67609d5a244d3e8130ba10f32fc",
+      "src/inazumaq2n/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tests/exact.py": "6bdbc73c81043cfeae1b91d1b2ec2ec9bf78e3f99204d00a4cf24351199f696c",
+      "vendor/fastcd/VENDORED.json": "0bee0acd6642d9658df14bb68e9665a9c82d20c6666aa733b75e00be53ddff7e"
+    }
+  },
+  "tools_sha256": {
+    "stability.py": "cc713ae5c6bb583806d8009ca7003994283c0ba3afbcd19cce0352457c8de399",
+    "stability_plots.py": "aaf87fed620d3306445a6fec1a0e9df050e0f641154f28f88a2712d902d9d5b3",
+    "stability_report.py": "e96447412296644ef5c6cd9a0245faa1ab44cf1e88261b0cd9c182e2589d21af",
+    "stability_study.py": "a5c54f04f3516c2808b4b40f48793f37141732cb78de78a9c0476a4576ee039e"
+  },
+  "raw_sha256": {
+    "raw/accuracy.json": "93a28e309b4b0989ab94feb08058002b1d99a1af2319bda05705cbad0ec18349"
+  }
+}

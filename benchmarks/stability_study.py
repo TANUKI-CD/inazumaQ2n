@@ -61,6 +61,8 @@ def source_hashes(root: Path) -> dict[str, str]:
         if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".so"
     ]
     files += [root / "benchmarks" / "baseline.py", root / "tests" / "exact.py"]
+    # The record of the fastCD sources that the package was built from
+    files += [p for p in [root / "vendor" / "fastcd" / "VENDORED.json"] if p.is_file()]
     return {p.relative_to(root).as_posix(): sha256(p) for p in sorted(files)}
 
 
@@ -113,6 +115,17 @@ def readme(study: dict[str, Any], figures: dict[str, Any], files: list[str]) -> 
         "",
         "- **I, inazumaQ2n:** the block evaluated from its centered moments, as `q2n` "
         "and `q2n_map` evaluate blocks that do not overlap.",
+    ]
+    if "F" in figures["nonfinite"]:
+        lines += [
+            "- **F, inazumaQ2n with fastCD:** the block evaluated by one fused sum of "
+            'products of fastCD, as with `algorithm="fastcd"`, behind the same guards '
+            "as I.",
+            "- **G, inazumaQ2n with fastCD from tiles:** F with the records and the "
+            "statistics of the block merged from four tiles, as for blocks that overlap "
+            "with a stride of half the block size.",
+        ]
+    lines += [
         "- **T, inazumaQ2n from tiles:** the block merged from four tiles, as for blocks "
         "that overlap with a stride of half the block size.",
         "- **U, inazumaQ2n without its guards:** I without the evaluation by definition "
@@ -139,6 +152,13 @@ def readme(study: dict[str, Any], figures: dict[str, Any], files: list[str]) -> 
         f"| NumPy | {environment['numpy']} |",
         f"| inazumaQ2n | {environment['inazumaq2n']}, kernels {runtime['simd']}, "
         "matrix products by NumPy |",
+    ]
+    if "fastcd" in runtime:
+        lines += [
+            f"| fastCD | {runtime['fastcd']}, compiled into inazumaQ2n, fused sums by "
+            f"its {runtime['fastcd_kernel']} kernel |",
+        ]
+    lines += [
         f"| pyfastcd | {environment['pyfastcd']} |",
         f"| Matplotlib | {environment['matplotlib']} |",
         f"| Worker processes | {study['jobs']} |",

@@ -1,12 +1,14 @@
 # Benchmark
 
 The driver `benchmarks/benchmark.py` times complete calls of the public
-interface. It has two protocols:
+interface. It has four protocols:
 
 | `--protocol` | Measurements |
 | --- | --- |
 | `calls` (default) | `q2n` and a reused `Q2nPlan` on a fixed set of images, beside the evaluation of the definition pixel by pixel with the products of pyfastcd's quasilinear and direct algorithms |
 | `kernels` | For images with one to four bands: the kernels that need no matrix product, in every instruction set of the processor, against the route through a matrix product |
+| `algorithms` | The real cross moments, the fused sums of fastCD and the recursive product of the reference toolboxes, over sweeps of the dimension, the band count, the overlap, the sample type, the block size and the workers; see [Algorithms](#algorithms) |
+| `toolboxes` | The published toolboxes themselves, the MATLAB one under GNU Octave, beside the package, with the difference of their values; see [Toolboxes](#toolboxes) |
 
 This page describes the comparison, how the protocols measure, how to run
 them, and the archived results. The accuracy of the values is covered in
@@ -101,6 +103,11 @@ the thread pools in the process, and the SHA-256 of every source file of the
 package.
 
 ## Results
+
+The results of this section were measured before the fused sums of fastCD
+were added, when every image took the route that `algorithm="moments"` now
+names; for images with more than four bands, `q2n` now selects the faster of
+the two routes, which [Algorithms](#algorithms) measures.
 
 All results below were measured on 2026-11-13 on a Dell PowerEdge T440 with
 an Intel Xeon Gold 6148 (Skylake-SP, AVX-512, 1 MiB of second-level cache
@@ -225,6 +232,305 @@ physical cores, 9 rounds each, from `workers-1.json`, `workers-2.json` and
 Four workers are 2.4 to 2.8 times faster than one for images with more than
 four bands. For calls that take a millisecond or less, handing the tiles to
 threads costs about as much as it saves, and workers should be left at one.
+
+## Algorithms
+
+The package obtains the covariance of a block either from real cross moments
+or from one fused sum of products of fastCD (see
+[Conventions and results](mathematics.md)), and `algorithm="auto"` selects
+between them. The `algorithms` protocol is the measurement behind that
+selection. It times three evaluations of the same image pairs:
+
+| Variant | Evaluation |
+| --- | --- |
+| `toolbox` | The recursive product of the reference toolboxes, block by block in NumPy, as a complete call (`benchmarks/toolbox.py`) |
+| `moments` | A reused plan with `algorithm="moments"`; with MKL installed, also with `backend="numpy"` |
+| `fastcd` | A reused plan with `algorithm="fastcd"` |
+
+and a plan with `algorithm="auto"`, to record what it selects and how far
+the selected algorithm is from the faster one.
+
+`benchmarks/toolbox.py` is a NumPy port of the structure of the MATLAB
+implementation in the pansharpening toolbox, which its Python ports keep:
+for every block it normalizes the bands one at a time and multiplies every
+reference pixel by the conjugate of the test pixel with `onion_mult2D`, the
+doubling recursion on arrays of pixels. A product in dimension `N` is four
+products in dimension `N / 2`, so a pixel costs `N^2` real multiplications,
+and every level of the recursion allocates its operands. The port leaves
+out the rounding of the padded images to integers, which changes the value
+of the index and which inazumaQ2n does not reproduce; its values agree with
+those of the package to `7e-16` in every case of the run.
+
+### Sweeps
+
+| `--sweeps` | Cases |
+| --- | --- |
+| `dimension` | `B = N` bands for `N` from 2 to 1024, blocks of 32 without overlap, with the toolbox |
+| `bands` | `B = N / 2 + 1`, `5N / 8`, `3N / 4` and `7N / 8` for `N` from 8 to 1024: the moments do less work with fewer bands, the fused sums the same |
+| `overlap` | Blocks of 32 with stride 16 and of 64 with stride 16, merged from 4 and 16 tiles, with `B = N` and, for 4 tiles, with fewer bands |
+| `types` | `float32`, `uint16` and `uint8` samples |
+| `blocks` | Blocks of 8, 16 and 64 pixels without overlap |
+| `workers` | 1, 2, 4 and 8 workers |
+
+The images are `float64` unless stated, and their side depends on the
+dimension so that every image exceeds the second-level cache of a core: 512
+pixels through `N = 16`, 256 through 64, 128 through 256 and 64 above. The
+toolbox is timed in three rounds at most, and a call of more than two
+seconds is timed from its first call. Before timing, the values of the
+plans must agree to `1e-12` and that of the toolbox to `1e-10`.
+
+```sh
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 taskset -c 6 \
+    python benchmarks/benchmark.py --protocol algorithms --rounds 9 \
+    --sweeps dimension bands overlap types blocks --output algorithms.json
+```
+
+`--no-toolbox`, `--toolbox-rounds N` and `--max-dimension N` shorten a run.
+The driver writes the report `algorithms.md` beside the JSON file.
+
+fastCD selects the kernel of its fused sums at run time and offers no
+switch, so one build measures one kernel on a given processor. The AVX2 and
+portable kernels were measured on builds with fastCD's tuning macro, which
+`CFLAGS` passes to `setup.py`: `CFLAGS=-DFASTCD_SUM_MAX_KERNEL=2` withholds
+its AVX-512 kernel and `=1` leaves the portable one; they were run with
+`--simd avx2` and `--simd baseline`, so that the kernels of inazumaQ2n match.
+
+### Measured results
+
+Measured on 2026-11-21 on the host of the other results, from the working
+tree that introduced the fused sums, with fastCD 1.5.0 and MKL 2026.2.1 on
+one logical CPU. The observations are archived in
+[benchmark-results/fastcd-20261121/](https://git.tanuki-cd.com/algebraity/inazumaq2n/src/branch/main/benchmark-results/fastcd-20261121/).
+
+Median milliseconds with the AVX-512 kernels, `B = N`, blocks of 32 without
+overlap, from `algorithms-avx512.json`:
+
+| N | image | toolbox | moments | fastcd | toolbox / moments | toolbox / fastcd | moments / fastcd | `auto` |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 2 | 512 x 512 | 45.5 | 0.57 | 3.20 | 80.3 | 14.2 | 0.18 | moments |
+| 4 | 512 x 512 | 122 | 1.65 | 3.84 | 73.9 | 31.8 | 0.43 | moments |
+| 8 | 512 x 512 | 344 | 11.0 | 5.62 | 31.3 | 61.2 | 1.96 | fastcd |
+| 16 | 512 x 512 | 1,052 | 21.1 | 12.3 | 49.9 | 85.6 | 1.71 | fastcd |
+| 32 | 256 x 256 | 915 | 13.1 | 5.89 | 69.8 | 155 | 2.23 | fastcd |
+| 64 | 256 x 256 | 3,476 | 26.0 | 15.9 | 134 | 219 | 1.64 | fastcd |
+| 128 | 128 x 128 | 3,397 | 19.3 | 9.46 | 176 | 359 | 2.04 | fastcd |
+| 256 | 128 x 128 | 13,034 | 47.4 | 21.1 | 275 | 617 | 2.25 | fastcd |
+| 512 | 64 x 64 | 12,815 | 40.8 | 13.1 | 314 | 975 | 3.10 | fastcd |
+| 1024 | 64 x 64 | 50,799 | 136 | 34.9 | 373 | 1,456 | 3.90 | fastcd |
+
+Both algorithms of the package are faster than the recursion of the
+toolboxes at every dimension: the moments by 31 to 373 times, the fused sums
+by 14 to 1,456 times, and the algorithm that `auto` selects by 61 times at
+least. The advantage grows with the dimension, as `N^2` against `B^2` with
+an optimized matrix product, and against `N log N`. Between the two, the
+kernels for at most four bands, which need neither a workspace nor a
+product, are 2.3 to 5.6 times faster than a fused sum, and from eight bands
+on the fused sums are 1.6 to 3.9 times faster than the moments, in all 9
+rounds at every dimension.
+
+The time of the moments divided by that of the fused sums, with each kernel
+of fastCD, for `B = N`; `auto` selects the fused sums where the ratio is
+bold:
+
+| N | AVX-512, no overlap | AVX2, no overlap | portable, no overlap | AVX-512, 32 / 16 | AVX2, 32 / 16 | portable, 32 / 16 | AVX-512, 64 / 16 | AVX2, 64 / 16 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 0.18 | 0.22 | 0.94 |  |  |  |  |  |
+| 4 | 0.43 | 0.54 | 1.02 |  |  |  |  |  |
+| 8 | **1.96** | **1.59** | 0.98 | 0.82 | 0.67 | 0.34 |  |  |
+| 16 | **1.71** | **1.33** | 0.78 | 0.84 | 0.55 | 0.28 |  |  |
+| 32 | **2.23** | **1.48** | 0.72 | 0.90 | 0.59 | 0.25 |  |  |
+| 64 | **1.64** | **1.19** | 0.59 | 0.86 | 0.59 | 0.26 | 0.39 | 0.24 |
+| 128 | **2.04** | **1.41** | 0.71 | **1.30** | 0.67 | 0.35 | 0.71 | 0.39 |
+| 256 | **2.25** | **1.49** | 0.76 | **1.39** | 0.80 | 0.39 | 0.88 | 0.47 |
+| 512 | **3.10** | **1.96** | 0.94 | **2.29** | **1.36** | 0.60 | **1.36** | 0.85 |
+| 1024 | **3.90** | **2.87** | 1.46 | **3.12** | **2.02** | 1.03 | **1.67** | **1.09** |
+
+Without overlap the fused sums are the faster from eight bands on with
+either vector kernel. With overlap the moments form the matrix of a tile
+once for the blocks that share it, while a pixel enters the fused sum of
+every block that contains it; the two share only the reading of the pixels
+and the statistics of the tiles. With a stride of half the block the fused
+sums are then the faster from dimension 128 with AVX-512 and from 512 with
+AVX2, and with a quarter from 512 and 1024. The portable kernel, which on
+this processor rounds products and sums separately and uses no vector
+instructions, is faster than the moments at dimension 1024 only, and `auto`
+does not select it. With the portable kernels of both, images with two and
+four bands take about as long by either route.
+
+The same ratio for fewer bands than the dimension, without overlap:
+
+| N | AVX-512: N / 2 + 1 | 5N / 8 | 3N / 4 | 7N / 8 | N | AVX2: N / 2 + 1 | 5N / 8 | 3N / 4 | 7N / 8 | N |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | **1.10** | **1.10** | **1.44** | **1.35** | **1.96** | 0.96 | 0.96 | 1.05 | **1.20** | **1.59** |
+| 16 | 1.06 | 1.17 | **1.20** | **1.31** | **1.71** | 0.78 | 0.87 | 1.01 | 1.03 | **1.33** |
+| 32 | 0.96 | 1.10 | **1.60** | **1.53** | **2.23** | 0.64 | 0.72 | 0.91 | 0.99 | **1.48** |
+| 64 | 0.93 | **1.11** | **1.33** | **1.44** | **1.64** | 0.63 | 0.73 | 0.86 | 0.94 | **1.19** |
+| 128 | 0.87 | **1.17** | **1.33** | **1.71** | **2.04** | 0.60 | 0.70 | 0.83 | 1.13 | **1.41** |
+| 256 | 1.13 | **1.44** | **1.57** | **1.93** | **2.25** | 0.68 | 0.94 | 0.97 | **1.29** | **1.49** |
+| 512 | 1.10 | **1.51** | **1.84** | **2.34** | **3.10** | 0.70 | 0.95 | **1.24** | **1.53** | **1.96** |
+| 1024 | **1.34** | **1.97** | **2.60** | **3.22** | **3.90** | 0.96 | **1.25** | **1.77** | **2.22** | **2.87** |
+
+At `N = 8` the first two columns are the same image, with five bands. A
+fused sum costs the same for every band count of a dimension, and the
+moments less for fewer bands, so the fused sums need the bands to fill most
+of the dimension: five eighths to three quarters of it with AVX-512, and
+nearly all of it with AVX2 below dimension 256. With a stride of half the block the AVX-512 kernel
+needs `B = N` at dimension 128, seven eighths at 256, three quarters at 512
+and five eighths at 1024.
+
+With narrower samples and other block sizes the fused sums gain as much or
+more: over the `types` and `blocks` sweeps the ratio is 1.6 to 3.5 and 1.7
+to 7.4 with AVX-512, and 1.1 to 2.4 and 1.2 to 4.9 with AVX2, for the
+dimensions 8, 32, 128 and 512.
+
+Median milliseconds with several workers on eight physical cores, from
+`algorithms-workers.json`:
+
+| N | image | workers | moments | fastcd | moments / fastcd |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 32 | 512 x 512 | 1 | 55.6 | 30.3 | 1.83 |
+| 32 | 512 x 512 | 2 | 34.9 | 16.4 | 2.12 |
+| 32 | 512 x 512 | 4 | 20.1 | 6.56 | 3.06 |
+| 32 | 512 x 512 | 8 | 14.7 | 5.14 | 2.86 |
+| 256 | 256 x 256 | 1 | 177 | 76.7 | 2.31 |
+| 256 | 256 x 256 | 2 | 132 | 48.8 | 2.69 |
+| 256 | 256 x 256 | 4 | 76.7 | 28.0 | 2.74 |
+| 256 | 256 x 256 | 8 | 55.2 | 22.6 | 2.44 |
+
+### What `auto` selects
+
+`src/inazumaq2n/_auto.py` holds, for each vector kernel of fastCD, each
+measured number of tiles per block (1, 4 and 16) and each dimension, the
+least share of the dimension that the bands must fill for the fused sums to
+have been at least 1.1 times as fast as the moments; `auto` selects the
+fused sums from that share on. A tile count that was not measured uses the
+entry of the next larger one, more than 16 tiles select the moments, and a
+dimension above 1024 uses the entry of 1024. Images with at most four
+bands, and every image where fastCD runs its portable kernel, use the
+moments.
+
+In the 180 cases of the two single-core runs with vector kernels, `auto`
+selected the faster algorithm in 168; in the other 12 the algorithm it
+selected took at most 1.17 times as long as the faster one. The table is a
+measurement of one processor with MKL as the matrix-product library; on
+another machine `algorithm="moments"` or `algorithm="fastcd"` overrides it.
+
+## Toolboxes
+
+The comparisons above use code written for this repository: the definition
+evaluated with the products of pyfastcd, and a NumPy port of the recursion
+of the toolboxes. The `toolboxes` protocol runs the published code itself,
+and records two things for it: how long it takes, and how far its values
+are from those of inazumaQ2n.
+
+`benchmarks/toolboxes.py` lists each implementation as files of a public
+repository at a pinned commit, with the SHA-256 of every file.
+`python benchmarks/toolboxes.py fetch` downloads them into
+`benchmarks/.toolboxes`, which is not committed or distributed, and nothing
+is run that does not match its hash.
+
+| Name | Implementation | Runs with |
+| --- | --- | --- |
+| `matlab` | `q2n.m`, `onions_quality.m`, `onion_mult.m`, `onion_mult2D.m` and `norm_blocco.m` of the MATLAB pansharpening toolbox, in the copy of [DLPan-Toolbox](https://github.com/liangjiandeng/DLPan-Toolbox) | GNU Octave |
+| `pancollection` | `my_q2n.py` of [PanCollection](https://github.com/XiaoXiao-Woo/PanCollection), a NumPy port | NumPy, and PyTorch, which the file imports |
+| `hyperspectral` | `Q2n` of the [hyperspectral pansharpening toolbox](https://github.com/matciotola/hyperspectral_pansharpening_toolbox), a PyTorch port | PyTorch and torchvision |
+
+The MATLAB code runs unchanged under Octave. It calls `mean2` and `std2` of
+the Image Processing Toolbox, which Octave has only with its image package;
+`benchmarks/octave/shims` supplies the two where they are missing. The
+driver passes the images as doubles and times the call of `q2n` inside the
+interpreter, so that neither its start nor the transfer of the images is
+counted.
+
+The toolbox converts both images to `uint16` first, so the comparison uses
+images of `uint16` samples, on which it and inazumaQ2n compute the same
+index (see [Conventions and results](mathematics.md#agreement-with-the-toolbox)).
+`benchmarks/test_toolboxes.py` asserts the agreement to `1e-12` on more
+geometries; the benchmark records the largest difference it met.
+
+```sh
+python benchmarks/toolboxes.py fetch
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 taskset -c 6 \
+    python benchmarks/benchmark.py --protocol toolboxes --rounds 9 --output toolboxes.json
+```
+
+Median milliseconds on 2026-11-21 on the host of the other results, with
+GNU Octave 11.3.0 and PyTorch 2.15.0 on one thread, for `B = N` bands and
+blocks of 32 without overlap, the setting of the evaluation script of the
+toolbox. inazumaQ2n is a reused plan with `algorithm="auto"`, which selects
+the kernels for at most four bands at 2 and 4 bands and the fused sums from
+8 on. The factor in parentheses is the time divided by that of inazumaQ2n.
+The archive is
+[benchmark-results/toolboxes-20261121/](https://git.tanuki-cd.com/algebraity/inazumaq2n/src/branch/main/benchmark-results/toolboxes-20261121/).
+
+| Bands | image | inazumaQ2n | NumPy port of the toolbox | MATLAB toolbox in Octave | PanCollection | Hyperspectral toolbox, PyTorch |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 2 | 512 x 512 | 0.41 | 46.2 (112x) | 622 (1,505x) | 59.0 (143x) | 142 (343x) |
+| 4 | 512 x 512 | 1.54 | 123 (79x) | 1,189 (771x) | 148 (96x) | 283 (184x) |
+| 8 | 512 x 512 | 4.63 | 345 (75x) | 2,591 (560x) | 422 (91x) | 754 (163x) |
+| 16 | 512 x 512 | 7.94 | 1,101 (139x) | 6,461 (813x) | 1,306 (164x) | 2,366 (298x) |
+| 32 | 256 x 256 | 4.03 | 939 (233x) | 4,176 (1,037x) | 1,072 (266x) | 2,107 (523x) |
+| 64 | 256 x 256 | 11.6 | 3,447 (297x) | 13,142 (1,132x) | 3,943 (340x) | 8,033 (692x) |
+| 128 | 128 x 128 | 7.70 | 3,418 (444x) | 11,020 (1,430x) | 3,792 (492x) | 7,874 (1,022x) |
+| 256 | 128 x 128 | 19.4 | 13,209 (681x) | 41,076 (2,117x) | 14,805 (763x) | 31,483 (1,622x) |
+| 512 | 64 x 64 | 9.64 | 12,991 (1,348x) | 38,552 (4,001x) | 14,711 (1,527x) | 31,355 (3,254x) |
+| 1024 | 64 x 64 | 27.8 | 51,983 (1,868x) | 151,316 (5,439x) | 57,249 (2,058x) | 122,969 (4,420x) |
+
+inazumaQ2n is 75 to 1,900 times faster than the recursion in NumPy, 91 to
+2,100 times faster than PanCollection, 160 to 4,400 times faster than the
+PyTorch toolbox and 560 to 5,400 times faster than the MATLAB toolbox under
+Octave.
+
+The times of the MATLAB toolbox are those of Octave, which interprets the
+recursion without the compiler of MATLAB: it takes 3 to 13 times as long as
+the same recursion in NumPy, the more the smaller the dimension, where the
+calls and not the arithmetic are the cost. MATLAB was not available for
+this measurement and would be faster than Octave. The NumPy port is the
+fastest of the four and therefore the most favourable comparison for the
+recursion, and it is the one the algorithms protocol uses. PanCollection is
+the same recursion in NumPy and takes 1.1 to 1.3 times as long as the port;
+the PyTorch toolbox, on one thread and on the CPU, 2.1 to 3.1 times.
+
+### Agreement
+
+The largest difference of the value of a block from that of inazumaQ2n,
+over the dimensions of the table, and what `python benchmarks/toolboxes.py
+report` and the tests find outside its setting:
+
+| Implementation | Source | Largest difference of a block from inazumaQ2n, in the table | Outside the setting of the table |
+| --- | --- | ---: | --- |
+| MATLAB pansharpening toolbox | `q2n.m` and its helpers, in the copy of [DLPan-Toolbox](https://github.com/liangjiandeng/DLPan-Toolbox), run unchanged under GNU Octave | `1.7e-15` | Agrees to `1e-12` in every geometry of the tests: overlap, padding, any number of bands, zero and constant bands |
+| NumPy port of the toolbox | [benchmarks/toolbox.py](https://git.tanuki-cd.com/algebraity/inazumaq2n/src/branch/main/benchmarks/toolbox.py), in this repository | `1.3e-15` | Agrees to `1e-12` likewise |
+| PanCollection | `my_q2n.py` of [PanCollection](https://github.com/XiaoXiao-Woo/PanCollection), NumPy | `1.4e-07` | Fails when the number of bands is not a power of two; off by up to `6e-3` when blocks overlap or do not divide the image |
+| Hyperspectral pansharpening toolbox | `Q2n` of [hyperspectral_pansharpening_toolbox](https://github.com/matciotola/hyperspectral_pansharpening_toolbox), PyTorch | `1.4e-07` | Agrees to `1e-7` with overlap and with other numbers of bands; off by up to `2e-4` when the image needs a different padding at the bottom and at the right |
+
+The MATLAB toolbox, run as it is distributed, agrees with inazumaQ2n to
+rounding error at every dimension from 2 to 1024, and
+`benchmarks/test_toolboxes.py` requires that agreement to `1e-12`, for the
+moments and for the fused sums. The two Python ports are not exact, each
+for a reason that can be read in its source:
+
+- PanCollection normalizes every band with the population standard
+  deviation, `x.std()`, where `std2` of the toolbox divides by `P - 1`. In
+  the setting of the table the effect is `1e-7` or less. Its padding of the
+  image does not reflect the rows and columns as the toolbox does, which
+  changes the blocks at the bottom and the right when blocks overlap or do
+  not divide the image, and its padding of the bands raises an error for a
+  number of bands that is not a power of two.
+- The hyperspectral pansharpening toolbox writes the value of every block
+  into a single-precision tensor, which limits its agreement to about
+  `1e-7`. It pads the bottom of the image by the amount meant for the right
+  and the right by the amount meant for the bottom, which changes the
+  values when the two differ; an image that needs the same padding on both
+  sides agrees. It also normalizes a block in place after
+  converting it to double: for images passed as double tensors that
+  conversion does not copy, and overlapping blocks then overwrite each
+  other, so the adapter passes single-precision tensors, as the toolbox
+  itself does.
+
+These are the differences that `tests` and `report` exhibit on the pinned
+commits; they are stated to explain the numbers, not as a review of either
+project.
 
 ## Where the time goes
 

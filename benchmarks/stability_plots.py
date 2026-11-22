@@ -29,10 +29,17 @@ SIDE = 32
 OFFSETS = {"offset_1e3": 1e3, "offset_1e6": 1e6, "offset_1e9": 1e9, "offset_1e12": 1e12}
 
 # One colour for each method, kept across every chart
-COLORS = {"I": "#2a78d6", "Q": "#eb6834", "D": "#1baf7a", "U": "#8a5bd0"}
-MARKERS = {"I": "o", "Q": "s", "D": "^", "U": "D"}
+COLORS = {
+    "I": "#2a78d6",
+    "F": "#c2449b",
+    "Q": "#eb6834",
+    "D": "#1baf7a",
+    "U": "#8a5bd0",
+}
+MARKERS = {"I": "o", "F": "v", "Q": "s", "D": "^", "U": "D"}
 NAMES = {
     "I": "I, inazumaQ2n",
+    "F": "F, inazumaQ2n with the fused sums of fastCD",
     "Q": "Q, per pixel, pyfastcd quasilinear",
     "D": "D, per pixel, pyfastcd direct",
     "U": "U, inazumaQ2n without its guards",
@@ -54,6 +61,12 @@ def read_summary(path: Path) -> list[dict[str, Any]]:
                 row[key] = float(row[key]) if row[key] else None
             rows.append(row)
     return rows
+
+
+def present(rows: list[dict[str, Any]], methods: tuple[str, ...]) -> tuple[str, ...]:
+    """Return those of some methods that the summary of a study holds."""
+    measured = {row["method"] for row in rows}
+    return tuple(method for method in methods if method in measured)
 
 
 def style(
@@ -106,9 +119,9 @@ def save(figure: Any, directory: Path, name: str) -> None:
 
 def band_chart(rows: list[dict[str, Any]], directory: Path, key: str, name: str,
                ylabel: str, data: list[dict[str, Any]]) -> bool:  # fmt: skip
-    """Draw I, Q and D on typical inputs against the number of bands."""
+    """Draw I, F, Q and D on typical inputs against the number of bands."""
     lines = {}
-    for method in ("I", "Q", "D"):
+    for method in present(rows, ("I", "F", "Q", "D")):
         lines[method] = sorted(
             (float(r["bands"]), r[key], r["samples"])
             for r in rows
@@ -139,9 +152,9 @@ def band_chart(rows: list[dict[str, Any]], directory: Path, key: str, name: str,
 
 def offset_chart(rows: list[dict[str, Any]], directory: Path, name: str,
                  data: list[dict[str, Any]]) -> bool:  # fmt: skip
-    """Draw I, U, Q and D on images whose mean is far from zero, against the offset."""
+    """Draw I, F, U, Q and D on images whose mean is far from zero, against the offset."""
     lines = {}
-    for method in ("I", "U", "Q", "D"):
+    for method in present(rows, ("I", "F", "U", "Q", "D")):
         lines[method] = sorted(
             (OFFSETS[r["family"]], r["median_eta"], r["samples"])
             for r in rows

@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <fastcd/fastcd.h>
+
 /*
  * Compiled kernels of inazumaq2n.
  *
@@ -31,6 +33,22 @@
  *   finish    merges the tiles of each block, applies the normalization of
  *             every band to G, contracts it with the Cayley--Dickson signs
  *             and evaluates the index of the block.
+ *
+ * The same covariance is also a sum of P hypercomplex products, one for each
+ * pixel of the block, and fastCD evaluates such a sum without forming the
+ * products: its fused sum accumulates the multiplications of its
+ * quasilinear algorithm over the pixels and applies the additions of the
+ * algorithm once. That costs O(P N log N) for a block instead of the
+ * O(P B^2) of the matrix G, which is less when the image has many bands.
+ *
+ *   fused     writes the pixels of one block as records of N doubles with
+ *             the statistics of every band, obtains the covariance of the
+ *             normalized block from one fused sum of fastCD, and evaluates
+ *             the index of the block.
+ *   fused_tiles  does the same for blocks that overlap and are unions of
+ *             stride-sized tiles: the records and the statistics of a tile
+ *             are written once and shared by the blocks that contain it,
+ *             and only the sum is repeated for every block.
  *
  * A tile is a block when blocks do not overlap. When the block size is a
  * multiple of the stride, tiles are stride-sized and each block is the
@@ -92,6 +110,8 @@ typedef void (*PrepareFn)(const void*, const void*, ptrdiff_t, ptrdiff_t, ptrdif
         const int32_t*, ptrdiff_t, ptrdiff_t, double*, double*, double*);
 typedef void (*DirectFn)(const void*, const void*, ptrdiff_t, ptrdiff_t, ptrdiff_t,
         const int32_t*, ptrdiff_t, ptrdiff_t, double*, double*);
+typedef void (*FusedFn)(const void*, const void*, ptrdiff_t, ptrdiff_t, ptrdiff_t,
+        ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, double*, double*, double*);
 
 // The pixel kernels of one instruction set, indexed by sample type
 typedef struct {
@@ -99,6 +119,7 @@ typedef struct {
     int direct_is_fast;
     PrepareFn prepare[DT_COUNT];
     DirectFn direct[DT_COUNT];
+    FusedFn fused[DT_COUNT];
 } Kernels;
 
 /*
@@ -336,6 +357,327 @@ static void finish(const double* grams, const double* stats, const int32_t* ids,
         for (ptrdiff_t k = 0; k < dimension; k++) norm += cov[k] * cov[k];
         values[block] = variance == 0 ? fabs(bias) : 2 * bias * sqrt(norm) / variance;
     }
+}
+
+/*
+ * The evaluation of blocks by fused sums. For each block, the pixel kernel
+ * writes the records of both images and the statistics of every band, and
+ * the scales of the normalization follow from the statistics exactly as in
+ * finish, with the same marks in risk. The covariance of the normalized
+ * block is then
+ *
+ *     sum_p ((x_p - m) D) ((y_p - m') D'),
+ *
+ * one fused sum of fastCD over the records, in which the means are the
+ * shifts and the scales, with the signs of the conjugate, are the scales of
+ * its affine map. The coordinates beyond the bands of the image are zero in
+ * every record and are shifted by zero, so they contribute nothing. A block
+ * that is marked, or whose variances are all zero, needs no sum.
+ *
+ * work holds fused_work(pixels, dimension) doubles: the records of both
+ * images, nine arrays of dimension doubles, and the workspace of the sum.
+ */
+
+// The number of doubles in the arrays of dimension doubles of the fused kernel
+#define Q2N_FUSED_SMALL 9
+
+// Write the workspace length of the fused sums, or return -1 if it is unknown
+static int fused_sum_workspace(ptrdiff_t dimension, size_t* length) {
+    return fastcd_mul_sum_workspace_size((size_t)dimension, length) == FASTCD_SUCCESS
+            ? 0 : -1;
+}
+
+// Return the doubles of work the fused kernel needs, or -1 if they overflow
+static Py_ssize_t fused_work(Py_ssize_t pixels, Py_ssize_t dimension) {
+    const Py_ssize_t limit = PY_SSIZE_T_MAX / (Py_ssize_t)sizeof(double);
+    size_t sum;
+    Py_ssize_t records, rest;
+
+    if (fused_sum_workspace(dimension, &sum) != 0 || sum > (size_t)limit) return -1;
+    if (pixels > limit / 2 / dimension) return -1;
+    records = 2 * pixels * dimension;
+    rest = Q2N_FUSED_SMALL * dimension + (Py_ssize_t)sum;
+    return records > limit - rest ? -1 : records + rest;
+}
+
+// Evaluate count blocks by fused sums; returns 0, or the failing status of fastCD
+static int fused(const Kernels* kernels, int type, const void* x, const void* y,
+        ptrdiff_t height, ptrdiff_t width, ptrdiff_t bands, ptrdiff_t dimension,
+        const int32_t* origins, ptrdiff_t count, ptrdiff_t side, double* work,
+        double* values, uint8_t* risk) {
+    const ptrdiff_t tile_pixels = side * side;
+    const double pixels = (double)tile_pixels;
+    const double n = (double)dimension;
+    double* xr = work;
+    double* yr = xr + tile_pixels * dimension;
+    double* stats = yr + tile_pixels * dimension;
+    double* mx = stats;
+    double* my = mx + bands;
+    double* vx = my + bands;
+    double* vy = vx + bands;
+    double* shift_x = stats + 4 * dimension;
+    double* shift_y = shift_x + dimension;
+    double* sx = shift_y + dimension;
+    double* sy = sx + dimension;
+    double* cov = sy + dimension;
+    FastCDWorkspaceF64 workspace;
+    FastCDSumMapF64 map;
+    size_t length;
+
+    if (fused_sum_workspace(dimension, &length) != 0) return (int)FASTCD_INVALID_DIMENSION;
+    workspace.data = cov + dimension;
+    workspace.length = length;
+    map.x_shift = shift_x;
+    map.x_scale = sx;
+    map.y_shift = shift_y;
+    map.y_scale = sy;
+    // The coordinates beyond the image: zero samples, shifted by zero
+    for (ptrdiff_t p = 0; p < tile_pixels; p++) {
+        for (ptrdiff_t b = bands; b < dimension; b++) {
+            xr[p * dimension + b] = 0.0;
+            yr[p * dimension + b] = 0.0;
+        }
+    }
+    for (ptrdiff_t b = bands; b < dimension; b++) {
+        shift_x[b] = shift_y[b] = 0.0;
+        sx[b] = sy[b] = 1.0;
+    }
+
+    for (ptrdiff_t block = 0; block < count; block++) {
+        double n2 = (double)(dimension - bands), variance = 0.0, norm = 0.0, bias;
+        FastCDStatus status;
+
+        kernels->fused[type](x, y, height, width, bands, origins[2 * block],
+                origins[2 * block + 1], side, dimension, xr, yr, stats);
+        risk[block] = 0;
+        for (ptrdiff_t b = 0; b < bands; b++) {
+            double sd = sqrt(vx[b] / (pixels - 1.0));
+            double mean;
+
+            if (sd == 0) sd = DBL_EPSILON;
+            if (fabs(mx[b]) > 1000 * sd
+                    || (vx[b] > 0 && fabs(mx[b]) <= pixels * DBL_EPSILON * sd)) {
+                risk[block] = 1;
+            }
+            if (raw_range_risky(mx[b], my[b], vx[b], vy[b], pixels)) risk[block] = 1;
+            sx[b] = 1 / sd;
+            sy[b] = mx[b] == 0 ? 1 : sx[b];
+            mean = 1 + (my[b] - mx[b]) * sy[b];
+            n2 += mean * mean;
+            variance += vx[b] * sx[b] * sx[b] + vy[b] * sy[b] * sy[b];
+            // The conjugate of y is folded into its scale
+            if (b != 0) sy[b] = -sy[b];
+            shift_x[b] = mx[b];
+            shift_y[b] = my[b];
+        }
+        bias = 2 * sqrt(n * n2) / (n + n2);
+        if (risk[block] || variance == 0) {
+            // A marked block is evaluated by the caller from its samples
+            values[block] = fabs(bias);
+            continue;
+        }
+        status = fastcd_mul_sum_f64(cov, xr, (size_t)dimension, yr, (size_t)dimension,
+                (size_t)tile_pixels, (size_t)dimension, &map, &workspace);
+        if (status != FASTCD_SUCCESS) return (int)status;
+        for (ptrdiff_t k = 0; k < dimension; k++) norm += cov[k] * cov[k];
+        values[block] = 2 * bias * sqrt(norm) / variance;
+    }
+    return 0;
+}
+
+/*
+ * Blocks that are unions of q by q tiles of `stride` pixels a side share the
+ * records and the statistics of their tiles. The normalization belongs to
+ * the block, so the sum of a block cannot be put together from sums of its
+ * tiles; but the records of a tile are raw samples, and the means and the
+ * scales of a block enter its sum only through the affine map. The kernel
+ * therefore writes each tile once and repeats only the sum.
+ *
+ * It evaluates a rectangle of blocks, rows row0 to row0 + rows and columns
+ * col0 to col0 + cols of the grid of blocks, row by row. A block row needs
+ * q rows of tiles, and consecutive block rows share q - 1 of them, so the
+ * kernel keeps q rows of cols + q - 1 tiles and replaces the oldest row
+ * when it moves down. The records of tile row t and tile column c are
+ * stored in place c * q + t mod q: the q rows of one tile column are
+ * adjacent, so the q * q tiles of a block are one contiguous run of
+ * records, whichever of the rows is the oldest, and a block is one fused
+ * sum. The statistics of a block are merged from those of its tiles with
+ * the identities, and in the order, of finish, and the same blocks are
+ * marked.
+ *
+ * work holds fused_tiles_work(tile_pixels, dimension, q, cols) doubles.
+ */
+
+// Return the doubles of work the shared-tile kernel needs, or -1 if they overflow
+static Py_ssize_t fused_tiles_work(Py_ssize_t tile_pixels, Py_ssize_t dimension,
+        Py_ssize_t q, Py_ssize_t cols) {
+    const Py_ssize_t limit = PY_SSIZE_T_MAX / (Py_ssize_t)sizeof(double);
+    size_t sum;
+    Py_ssize_t tiles, per_tile, rest;
+
+    if (fused_sum_workspace(dimension, &sum) != 0 || sum > (size_t)limit) return -1;
+    if (cols > limit - q || cols + q - 1 > limit / q) return -1;
+    tiles = (cols + q - 1) * q;
+    // Two records for every pixel of a tile, and four statistics of every band
+    if (tile_pixels > (limit / 2 - 2) / dimension) return -1;
+    per_tile = (2 * tile_pixels + 4) * dimension;
+    rest = Q2N_FUSED_SMALL * dimension + (Py_ssize_t)sum;
+    if (tiles > (limit - rest) / per_tile) return -1;
+    return tiles * per_tile + rest;
+}
+
+// Evaluate a rectangle of overlapping blocks by fused sums over shared tiles
+static int fused_tiles(const Kernels* kernels, int type, const void* x, const void* y,
+        ptrdiff_t height, ptrdiff_t width, ptrdiff_t bands, ptrdiff_t dimension,
+        ptrdiff_t stride, ptrdiff_t q, ptrdiff_t row0, ptrdiff_t rows, ptrdiff_t col0,
+        ptrdiff_t cols, ptrdiff_t pitch, double* work, double* values, uint8_t* risk) {
+    const ptrdiff_t tile_pixels = stride * stride;
+    const ptrdiff_t nt = q * q;
+    const ptrdiff_t tile_columns = cols + q - 1;
+    // The doubles of the records of one tile, and of its statistics
+    const ptrdiff_t slot = tile_pixels * dimension;
+    const ptrdiff_t entry = 4 * dimension;
+    const double pixels = (double)(tile_pixels * nt);
+    const double tile = (double)tile_pixels;
+    const double count = (double)nt;
+    const double n = (double)dimension;
+    double* xr = work;
+    double* yr = xr + tile_columns * q * slot;
+    double* tiles = yr + tile_columns * q * slot;
+    double* stats = tiles + tile_columns * q * entry;
+    double* mx = stats;
+    double* my = mx + bands;
+    double* vx = my + bands;
+    double* vy = vx + bands;
+    double* shift_x = stats + 4 * dimension;
+    double* shift_y = shift_x + dimension;
+    double* sx = shift_y + dimension;
+    double* sy = sx + dimension;
+    double* cov = sy + dimension;
+    FastCDWorkspaceF64 workspace;
+    FastCDSumMapF64 map;
+    size_t length;
+
+    if (fused_sum_workspace(dimension, &length) != 0) return (int)FASTCD_INVALID_DIMENSION;
+    workspace.data = cov + dimension;
+    workspace.length = length;
+    map.x_shift = shift_x;
+    map.x_scale = sx;
+    map.y_shift = shift_y;
+    map.y_scale = sy;
+    // The coordinates beyond the image: zero samples, shifted by zero
+    if (bands < dimension) {
+        for (ptrdiff_t p = 0; p < tile_columns * q * tile_pixels; p++) {
+            for (ptrdiff_t b = bands; b < dimension; b++) {
+                xr[p * dimension + b] = 0.0;
+                yr[p * dimension + b] = 0.0;
+            }
+        }
+    }
+    for (ptrdiff_t b = bands; b < dimension; b++) {
+        shift_x[b] = shift_y[b] = 0.0;
+        sx[b] = sy[b] = 1.0;
+    }
+
+    for (ptrdiff_t br = row0; br < row0 + rows; br++) {
+        // The first block row needs q rows of tiles, every other one a new row
+        for (ptrdiff_t tr = br == row0 ? br : br + q - 1; tr < br + q; tr++) {
+            for (ptrdiff_t tc = 0; tc < tile_columns; tc++) {
+                const ptrdiff_t place = tc * q + tr % q;
+
+                kernels->fused[type](x, y, height, width, bands, tr * stride,
+                        (col0 + tc) * stride, stride, dimension, xr + place * slot,
+                        yr + place * slot, tiles + place * entry);
+            }
+        }
+        for (ptrdiff_t bc = 0; bc < cols; bc++) {
+            const ptrdiff_t block = br * pitch + col0 + bc;
+            double n2 = (double)(dimension - bands), variance = 0.0, norm = 0.0, bias;
+            FastCDStatus status;
+
+            for (ptrdiff_t b = 0; b < 4 * bands; b++) mx[b] = 0.0;
+            for (ptrdiff_t u = 0; u < q; u++) {
+                for (ptrdiff_t v = 0; v < q; v++) {
+                    const double* s = tiles + ((bc + v) * q + (br + u) % q) * entry;
+
+                    for (ptrdiff_t b = 0; b < bands; b++) {
+                        mx[b] += s[b] / count;
+                        my[b] += s[b + bands] / count;
+                    }
+                }
+            }
+            for (ptrdiff_t u = 0; u < q; u++) {
+                for (ptrdiff_t v = 0; v < q; v++) {
+                    const double* s = tiles + ((bc + v) * q + (br + u) % q) * entry;
+
+                    for (ptrdiff_t b = 0; b < bands; b++) {
+                        const double dx = s[b] - mx[b], dy = s[b + bands] - my[b];
+
+                        vx[b] += s[b + 2 * bands] + tile * dx * dx;
+                        vy[b] += s[b + 3 * bands] + tile * dy * dy;
+                    }
+                }
+            }
+            risk[block] = 0;
+            for (ptrdiff_t b = 0; b < bands; b++) {
+                double sd = sqrt(vx[b] / (pixels - 1.0));
+                double mean;
+
+                if (sd == 0) sd = DBL_EPSILON;
+                if (fabs(mx[b]) > 1000 * sd
+                        || (vx[b] > 0 && fabs(mx[b]) <= pixels * DBL_EPSILON * sd)) {
+                    risk[block] = 1;
+                }
+                if (raw_range_risky(mx[b], my[b], vx[b], vy[b], pixels)) risk[block] = 1;
+                sx[b] = 1 / sd;
+                sy[b] = mx[b] == 0 ? 1 : sx[b];
+                mean = 1 + (my[b] - mx[b]) * sy[b];
+                n2 += mean * mean;
+                variance += vx[b] * sx[b] * sx[b] + vy[b] * sy[b] * sy[b];
+                // The conjugate of y is folded into its scale
+                if (b != 0) sy[b] = -sy[b];
+                shift_x[b] = mx[b];
+                shift_y[b] = my[b];
+            }
+            bias = 2 * sqrt(n * n2) / (n + n2);
+            if (risk[block] || variance == 0) {
+                // A marked block is evaluated by the caller from its samples
+                values[block] = fabs(bias);
+                continue;
+            }
+            status = fastcd_mul_sum_f64(cov, xr + bc * q * slot, (size_t)dimension,
+                    yr + bc * q * slot, (size_t)dimension, (size_t)(nt * tile_pixels),
+                    (size_t)dimension, &map, &workspace);
+            if (status != FASTCD_SUCCESS) return (int)status;
+            for (ptrdiff_t k = 0; k < dimension; k++) norm += cov[k] * cov[k];
+            values[block] = 2 * bias * sqrt(norm) / variance;
+        }
+    }
+    return 0;
+}
+
+/*
+ * The kernel of the fused sums that fastCD selects on this processor. fastCD
+ * chooses among its kernels at run time and reports the choice through no
+ * public function, so this follows its rule: with GCC or Clang on x86, where
+ * the build compiles them, AVX-512 with avx512f and AVX2 with avx2 and fma;
+ * the portable kernel otherwise. FASTCD_SUM_MAX_KERNEL is fastCD's tuning
+ * macro that withholds the wider kernels from a build made for measurement.
+ */
+#ifndef FASTCD_SUM_MAX_KERNEL
+#define FASTCD_SUM_MAX_KERNEL 3
+#endif
+
+// Return the name of the fused-sum kernel of fastCD in use
+static const char* fused_sum_kernel(void) {
+#if defined(Q2N_FASTCD_SUM_SIMD) && defined(Q2N_X86) && !defined(Q2N_MSVC)
+    if (FASTCD_SUM_MAX_KERNEL >= 3 && __builtin_cpu_supports("avx512f")) return "avx512";
+    if (FASTCD_SUM_MAX_KERNEL >= 2 && __builtin_cpu_supports("avx2")
+            && __builtin_cpu_supports("fma")) {
+        return "avx2";
+    }
+#endif
+    return "portable";
 }
 
 // The signature of cblas_dgemm with 64-bit integers
@@ -685,6 +1027,198 @@ fail:
     return NULL;
 }
 
+// fused(x, y, height, width, bands, dimension, origins, side, work, values, risk)
+static PyObject* core_fused(PyObject* module, PyObject* args) {
+    PyObject *xo, *yo, *oo, *wo, *vo, *ro;
+    Py_ssize_t height, width, bands, dimension, side, count, needed;
+    Py_buffer views[6];
+    const Kernels* kernels = active;
+    int held = 0, type, other, status = 0;
+
+    (void)module;
+    if (!PyArg_ParseTuple(args, "OOnnnnOnOOO", &xo, &yo, &height, &width, &bands,
+            &dimension, &oo, &side, &wo, &vo, &ro)) {
+        return NULL;
+    }
+    if (check_geometry(height, width, bands, side) != 0) return NULL;
+    if (side < 2 || side > Q2N_MAX_EXTENT / side) {
+        PyErr_SetString(PyExc_ValueError, "block extent is out of range");
+        return NULL;
+    }
+    if (dimension < bands || dimension > 2 * Q2N_MAX_EXTENT
+            || (dimension & (dimension - 1)) != 0) {
+        PyErr_SetString(PyExc_ValueError,
+                "dimension must be a power of two that is at least bands");
+        return NULL;
+    }
+    needed = fused_work(side * side, dimension);
+    if (needed < 0) {
+        PyErr_SetString(PyExc_ValueError, "the block is too large for a fused sum");
+        return NULL;
+    }
+    if ((type = acquire_image(xo, &views[0], "x")) < 0) goto fail;
+    held = 1;
+    if ((other = acquire_image(yo, &views[1], "y")) < 0) goto fail;
+    held = 2;
+    if (other != type) {
+        PyErr_SetString(PyExc_TypeError, "x and y must hold samples of one type");
+        goto fail;
+    }
+    if (acquire(oo, &views[2], 0, KIND_I32, "origins") != 0) goto fail;
+    held = 3;
+    if (acquire(wo, &views[3], 1, KIND_F64, "work") != 0) goto fail;
+    held = 4;
+    if (acquire(vo, &views[4], 1, KIND_F64, "values") != 0) goto fail;
+    held = 5;
+    if (acquire(ro, &views[5], 1, KIND_U8, "risk") != 0) goto fail;
+    held = 6;
+    if (check_origins(&views[2], height, width, side) != 0) goto fail;
+    count = views[2].len / 8;
+    if (count > 0) {
+        if (require(&views[0], height, width, bands, "x") != 0
+                || require(&views[1], height, width, bands, "y") != 0
+                || require(&views[3], needed, 1, 1, "work") != 0
+                || require(&views[4], count, 1, 1, "values") != 0
+                || require(&views[5], count, 1, 1, "risk") != 0) {
+            goto fail;
+        }
+        Py_BEGIN_ALLOW_THREADS
+        status = fused(kernels, type, views[0].buf, views[1].buf, height, width, bands,
+                dimension, (const int32_t*)views[2].buf, count, side,
+                (double*)views[3].buf, (double*)views[4].buf, (uint8_t*)views[5].buf);
+        Py_END_ALLOW_THREADS
+        if (status != 0) {
+            PyErr_Format(PyExc_RuntimeError, "fastCD failed: %s",
+                    fastcd_status_string((FastCDStatus)status));
+            goto fail;
+        }
+    }
+    release(views, held);
+    Py_RETURN_NONE;
+
+fail:
+    release(views, held);
+    return NULL;
+}
+
+// fused_tiles(x, y, height, width, bands, dimension, stride, q, row0, rows, col0,
+//             cols, pitch, work, values, risk)
+static PyObject* core_fused_tiles(PyObject* module, PyObject* args) {
+    PyObject *xo, *yo, *wo, *vo, *ro;
+    Py_ssize_t height, width, bands, dimension, stride, q, row0, rows, col0, cols, pitch;
+    Py_ssize_t needed;
+    Py_buffer views[5];
+    const Kernels* kernels = active;
+    int held = 0, type, other, status = 0;
+
+    (void)module;
+    if (!PyArg_ParseTuple(args, "OOnnnnnnnnnnnOOO", &xo, &yo, &height, &width, &bands,
+            &dimension, &stride, &q, &row0, &rows, &col0, &cols, &pitch, &wo, &vo, &ro)) {
+        return NULL;
+    }
+    if (check_geometry(height, width, bands, stride) != 0) return NULL;
+    if (q < 2 || q > Q2N_MAX_EXTENT / stride || stride > Q2N_MAX_EXTENT / stride
+            || q > Q2N_MAX_EXTENT / q) {
+        PyErr_SetString(PyExc_ValueError, "block extent is out of range");
+        return NULL;
+    }
+    if (dimension < bands || dimension > 2 * Q2N_MAX_EXTENT
+            || (dimension & (dimension - 1)) != 0) {
+        PyErr_SetString(PyExc_ValueError,
+                "dimension must be a power of two that is at least bands");
+        return NULL;
+    }
+    /* Every tile of the rectangle lies within the image and its reflection:
+     * the last one starts q - 1 tiles after the last block. */
+    if (row0 < 0 || col0 < 0 || rows < 1 || cols < 1 || pitch < 1
+            || rows > Q2N_MAX_EXTENT - row0 || cols > Q2N_MAX_EXTENT - col0
+            || col0 + cols > pitch
+            || row0 + rows + q - 1 > (2 * height) / stride
+            || col0 + cols + q - 1 > (2 * width) / stride) {
+        PyErr_SetString(PyExc_ValueError, "a block lies outside the image");
+        return NULL;
+    }
+    needed = fused_tiles_work(stride * stride, dimension, q, cols);
+    if (needed < 0) {
+        PyErr_SetString(PyExc_ValueError, "the blocks are too large for fused sums");
+        return NULL;
+    }
+    if ((type = acquire_image(xo, &views[0], "x")) < 0) goto fail;
+    held = 1;
+    if ((other = acquire_image(yo, &views[1], "y")) < 0) goto fail;
+    held = 2;
+    if (other != type) {
+        PyErr_SetString(PyExc_TypeError, "x and y must hold samples of one type");
+        goto fail;
+    }
+    if (acquire(wo, &views[2], 1, KIND_F64, "work") != 0) goto fail;
+    held = 3;
+    if (acquire(vo, &views[3], 1, KIND_F64, "values") != 0) goto fail;
+    held = 4;
+    if (acquire(ro, &views[4], 1, KIND_U8, "risk") != 0) goto fail;
+    held = 5;
+    if (require(&views[0], height, width, bands, "x") != 0
+            || require(&views[1], height, width, bands, "y") != 0
+            || require(&views[2], needed, 1, 1, "work") != 0
+            || require(&views[3], row0 + rows, pitch, 1, "values") != 0
+            || require(&views[4], row0 + rows, pitch, 1, "risk") != 0) {
+        goto fail;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    status = fused_tiles(kernels, type, views[0].buf, views[1].buf, height, width, bands,
+            dimension, stride, q, row0, rows, col0, cols, pitch, (double*)views[2].buf,
+            (double*)views[3].buf, (uint8_t*)views[4].buf);
+    Py_END_ALLOW_THREADS
+    if (status != 0) {
+        PyErr_Format(PyExc_RuntimeError, "fastCD failed: %s",
+                fastcd_status_string((FastCDStatus)status));
+        goto fail;
+    }
+    release(views, held);
+    Py_RETURN_NONE;
+
+fail:
+    release(views, held);
+    return NULL;
+}
+
+// fused_tiles_work(tile_pixels, dimension, q, cols): the doubles of work of fused_tiles
+static PyObject* core_fused_tiles_work(PyObject* module, PyObject* args) {
+    Py_ssize_t tile_pixels, dimension, q, cols, needed;
+
+    (void)module;
+    if (!PyArg_ParseTuple(args, "nnnn", &tile_pixels, &dimension, &q, &cols)) return NULL;
+    if (tile_pixels < 1 || q < 2 || cols < 1 || dimension < 1
+            || dimension > 2 * Q2N_MAX_EXTENT || (dimension & (dimension - 1)) != 0
+            || (needed = fused_tiles_work(tile_pixels, dimension, q, cols)) < 0) {
+        PyErr_SetString(PyExc_ValueError, "the blocks are too large for fused sums");
+        return NULL;
+    }
+    return PyLong_FromSsize_t(needed);
+}
+
+// fused_work(pixels, dimension): the doubles of work that fused needs
+static PyObject* core_fused_work(PyObject* module, PyObject* args) {
+    Py_ssize_t pixels, dimension, needed;
+
+    (void)module;
+    if (!PyArg_ParseTuple(args, "nn", &pixels, &dimension)) return NULL;
+    if (pixels < 1 || dimension < 1 || dimension > 2 * Q2N_MAX_EXTENT
+            || (dimension & (dimension - 1)) != 0
+            || (needed = fused_work(pixels, dimension)) < 0) {
+        PyErr_SetString(PyExc_ValueError, "the block is too large for a fused sum");
+        return NULL;
+    }
+    return PyLong_FromSsize_t(needed);
+}
+
+// fastcd(): the version of fastCD in the module and its fused-sum kernel in use
+static PyObject* core_fastcd(PyObject* module, PyObject* args) {
+    (void)module;
+    (void)args;
+    return Py_BuildValue("(ss)", fastcd_version_string(), fused_sum_kernel());
+}
+
 // gram_batch(gemm, set_threads, threads, xc, yc, grams, pixels, bands)
 static PyObject* core_gram_batch(PyObject* module, PyObject* args) {
     PyObject *fo, *to, *xco, *yco, *go;
@@ -805,6 +1339,30 @@ static PyMethodDef core_methods[] = {
             "       values, scratch, risk)\n\n"
             "Merge the tiles of every block and write its Q2n value, marking in\n"
             "risk the blocks that need evaluation from their normalized samples."},
+    {"fused", core_fused, METH_VARARGS,
+            "fused(x, y, height, width, bands, dimension, origins, side, work,\n"
+            "      values, risk)\n\n"
+            "Write the Q2n value of the blocks at origins, each from one fused\n"
+            "sum of fastCD, marking in risk the blocks that need evaluation from\n"
+            "their normalized samples."},
+    {"fused_work", core_fused_work, METH_VARARGS,
+            "fused_work(pixels, dimension)\n\n"
+            "Return the number of doubles of work that fused needs for blocks\n"
+            "of pixels pixels in the algebra of the given dimension."},
+    {"fused_tiles", core_fused_tiles, METH_VARARGS,
+            "fused_tiles(x, y, height, width, bands, dimension, stride, q, row0,\n"
+            "            rows, col0, cols, pitch, work, values, risk)\n\n"
+            "Write the Q2n value of the blocks of q by q tiles in rows row0 to\n"
+            "row0 + rows and columns col0 to col0 + cols of a grid with pitch\n"
+            "blocks to a row, sharing the records of the tiles between blocks."},
+    {"fused_tiles_work", core_fused_tiles_work, METH_VARARGS,
+            "fused_tiles_work(tile_pixels, dimension, q, cols)\n\n"
+            "Return the number of doubles of work that fused_tiles needs for\n"
+            "cols columns of blocks of q by q tiles."},
+    {"fastcd", core_fastcd, METH_NOARGS,
+            "fastcd()\n\n"
+            "Return the version of fastCD compiled into the module and the name\n"
+            "of its fused-sum kernel in use: avx512, avx2 or portable."},
     {"gram_batch", core_gram_batch, METH_VARARGS,
             "gram_batch(gemm, set_threads, threads, xc, yc, grams, pixels, bands)\n\n"
             "Form the cross moments of centered tiles with the dgemm at the\n"

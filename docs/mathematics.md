@@ -101,6 +101,32 @@ products `x z` and `m1 m2` are products in the algebra.
   of a zero standard deviation, the estimator of the standard deviation and
   the side on which the image is padded. Their values are not reproduced.
 
+### Agreement with the toolbox
+
+The `q2n` of the MATLAB toolbox converts both images to `uint16` before it
+does anything else, which rounds every sample to the nearest integer and
+limits it to the range 0 to 65535. inazumaq2n evaluates the same definition
+on the samples as they are given. On images whose samples are integers in
+that range, as the products of the sensors are, the two compute the same
+index; on any other image, the toolbox computes what inazumaq2n computes
+for the rounded images.
+
+This is tested against the code of the toolbox itself. `benchmarks/toolboxes.py`
+fetches `q2n.m` and its helpers at a pinned commit, verifies them, and runs
+them under GNU Octave, and `benchmarks/test_toolboxes.py` requires the value
+of every block to agree with that of the package, by its moments and by its
+fused sums, to `1e-12`: for 1 to 16 bands, with and without overlap, with
+padding at the bottom and the right, with a shift that does not divide the
+block, with 8- and 16-bit samples, and with bands that are zero, constant
+or identical. In the benchmark the largest difference of a block over
+images of 2 to 1024 bands is `1.7e-15`; see
+[Benchmark](benchmark.md#toolboxes), which also measures two Python ports
+of the toolbox and the details in which they differ from it.
+
+The evaluation script of the toolbox calls `q2n` with blocks of 32 pixels
+and a shift equal to the block, that is, without overlap; these are the
+defaults of the package.
+
 ## Evaluation from real moments
 
 ### The covariance is a contraction of a real matrix
@@ -240,9 +266,69 @@ NumPy's `matmul` or, when it is installed, directly by the `dgemm` of Intel
 MKL. The batch is sized so that the workspace of both images stays near
 8 MiB per worker.
 
+### Many bands: one fused sum of products per block
+
+The covariance of a block is also what its definition says it is, a sum of
+`P` products in the algebra:
+
+```text
+mu(D C D') = sum_p u_p v_p,     u_p = (X_p - a) D,     v_p = (Y_p - b) D',
+```
+
+with the coordinates beyond the bands of the image equal to zero. The
+products need not be formed to obtain their sum. A multiplication algorithm
+with `M` real multiplications computes `u v` as fixed linear combinations of
+`M` products `l_m(u) r_m(v)` of linear forms of its operands, so
+
+```text
+sum_p u_p v_p = combination of ( sum_p l_m(u_p) r_m(v_p) ),   m = 1, ..., M:
+```
+
+the `M` products are accumulated over the pixels, and the combination, the
+additions that follow the multiplications in the algorithm, is applied once
+to the accumulated sums. [fastCD](https://git.tanuki-cd.com/algebraity/fastCD)
+calls this a *fused sum* and provides it for its quasilinear algorithm, in
+which `M` grows like `N log N`. A block then costs `O(P N log N)`
+operations, against the `P B^2` of the matrix `C`, and no matrix is formed:
+the result is the vector `mu(D C D')` itself.
+
+For this route, a kernel writes the pixels of one block of both images as
+records of `N` doubles, sums every band, and accumulates the centered sums
+of squares in a second pass over the records, with the same operations in
+the same order as the centering above, so that a block has the same
+statistics by either route. The means and the scales `D` and `D'` then
+enter the fused sum as the affine map that fastCD applies to its operands
+as it reads them: coordinate `i` of a record of `X` is read as
+`(X_p[i] - a_i) / c_i`. The value of the block follows as before, from the
+norm of the sum and from the statistics.
+
+Two properties decide when this route is the faster one. Its cost depends
+on the dimension `N` and not on the number of bands `B`, so an image with
+few bands above a power of two pays for the whole dimension, while the
+matrix `C` has only `B` rows and columns. And the normalization `D` belongs
+to the block and is applied before the products, so the sum of a block
+cannot be put together from sums of its tiles, as its matrix `C` can: every
+block is summed on its own. [The benchmark](benchmark.md#algorithms)
+measures both effects, and `algorithm="auto"` follows it.
+
+What blocks that overlap do share is everything before the sum. The records
+of a tile are its raw samples, and the means and the scales of a block
+reach its sum only through the affine map. When `ws` is a multiple of
+`stride`, the kernel therefore writes the records and the statistics of
+each `stride` by `stride` tile once, merges the statistics of a block from
+those of its tiles with the identities above, and repeats only the sum. It
+moves down the image keeping `ws / stride` rows of tiles, stored so that
+the tiles of every block are one contiguous run of records, and a block
+remains one fused sum.
+
+The fused sums are those of fastCD 1.5.0, compiled into the extension module
+from `vendor/fastcd` with its own compiler options. fastCD runs them with an
+AVX-512 or an AVX2 kernel on x86-64, selected at run time, and with a
+portable kernel elsewhere.
+
 ### Samples are read in place
 
-Both kernels are compiled for samples of type `float64`, `float32`, `uint8`
+All kernels are compiled for samples of type `float64`, `float32`, `uint8`
 and `uint16`, and read images of those types from the memory of the caller
 without a converted copy. Each sample is converted to a double as it is
 loaded, which is exact for all four types, so the result is identical to
@@ -255,6 +341,8 @@ first.
 One routine merges the tiles of each block, forms the scales of the bands,
 contracts `D C D'` with the signs, and evaluates the value of the block.
 The signs are a table of `B^2` bytes, built once by the recurrence above.
+With the fused sums there is nothing to merge or contract: the routine that
+sums a block forms the same scales and evaluates its value directly.
 
 ### Blocks evaluated from their normalized samples
 
@@ -265,8 +353,8 @@ rounded mean, so its rounding errors largely cancel, while the shortcut
 assumes the exact mean for the reference only. The branches of the
 definition, a mean exactly zero and a band exactly constant, cannot be
 decided from rounded moments, and raw moments can underflow or overflow at
-extreme scales. The routine that evaluates the blocks therefore marks a
-block when, for some band,
+extreme scales. The routines that evaluate the blocks, by either
+route, therefore mark a block when, for some band,
 
 - the absolute mean of the reference exceeds 1000 times its standard
   deviation;
@@ -306,3 +394,12 @@ and the evaluation of a block of `T` tiles costs `T B^2` multiply-adds for
 the merge and the contraction, independent of `P`. The count of the
 definition, by comparison, is one product in an algebra of dimension `N` per
 pixel of every block.
+
+With the fused sums, a block of `P` pixels costs `2PB` stores and `2PB`
+additions for the records and the means, `2PB` subtractions,
+multiplications and additions for the squares, and one fused sum of `P`
+products: the multiplications of fastCD's quasilinear algorithm in
+dimension `N`, of which there are `O(N log N)`, once for every pixel, and
+its additions once for the block. Nothing depends on `B^2`. When blocks of
+`T` tiles overlap, the records and the statistics are those of the tiles
+and are formed once, and a pixel enters `T` sums.

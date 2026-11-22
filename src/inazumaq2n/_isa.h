@@ -8,11 +8,12 @@
  *   Q2N_DIRECT   1 if the kernels for at most four bands are fast here.
  *
  * The file defines an eight-lane vector of doubles, V8, and then includes
- * _prepare.h and the generated _direct.h for every sample type. V8 is one
- * 512-bit register with AVX-512, two 256-bit registers with AVX2, four
- * 128-bit registers with NEON, and eight doubles otherwise. Every operation
- * acts on each lane separately and V8_FMADD is a fused multiply-add in all
- * four, so a kernel gives bit-identical results with every instruction set.
+ * _prepare.h, the generated _direct.h and _fused.h for every sample type.
+ * V8 is one 512-bit register with AVX-512, two 256-bit registers with AVX2,
+ * four 128-bit registers with NEON, and eight doubles otherwise. Every
+ * operation acts on each lane separately and V8_FMADD is a fused
+ * multiply-add in all four, so a kernel gives bit-identical results with
+ * every instruction set.
  */
 
 #define Q2N_PASTE_(a, b) a##_##b
@@ -24,6 +25,7 @@
 #define V8_SET1 ISA(v8_set1)
 #define V8_ADD ISA(v8_add)
 #define V8_SUB ISA(v8_sub)
+#define V8_MUL ISA(v8_mul)
 #define V8_FMADD ISA(v8_fmadd)
 #define V8_REVERSE ISA(v8_reverse)
 #define V8_STORE ISA(v8_store)
@@ -54,6 +56,10 @@ Q2N_INLINE Q2N_TARGET V8 V8_ADD(V8 a, V8 b) {
 
 Q2N_INLINE Q2N_TARGET V8 V8_SUB(V8 a, V8 b) {
     return _mm512_sub_pd(a, b);
+}
+
+Q2N_INLINE Q2N_TARGET V8 V8_MUL(V8 a, V8 b) {
+    return _mm512_mul_pd(a, b);
 }
 
 // a * b + c with one rounding
@@ -158,6 +164,14 @@ Q2N_INLINE Q2N_TARGET V8 V8_SUB(V8 a, V8 b) {
 
     r.lo = _mm256_sub_pd(a.lo, b.lo);
     r.hi = _mm256_sub_pd(a.hi, b.hi);
+    return r;
+}
+
+Q2N_INLINE Q2N_TARGET V8 V8_MUL(V8 a, V8 b) {
+    V8 r;
+
+    r.lo = _mm256_mul_pd(a.lo, b.lo);
+    r.hi = _mm256_mul_pd(a.hi, b.hi);
     return r;
 }
 
@@ -302,6 +316,13 @@ Q2N_INLINE Q2N_TARGET V8 V8_SUB(V8 a, V8 b) {
     return r;
 }
 
+Q2N_INLINE Q2N_TARGET V8 V8_MUL(V8 a, V8 b) {
+    V8 r;
+
+    for (int k = 0; k < 4; k++) r.v[k] = vmulq_f64(a.v[k], b.v[k]);
+    return r;
+}
+
 // a * b + c with one rounding
 Q2N_INLINE Q2N_TARGET V8 V8_FMADD(V8 a, V8 b, V8 c) {
     V8 r;
@@ -439,6 +460,13 @@ Q2N_INLINE Q2N_TARGET V8 V8_SUB(V8 a, V8 b) {
     return r;
 }
 
+Q2N_INLINE Q2N_TARGET V8 V8_MUL(V8 a, V8 b) {
+    V8 r;
+
+    for (int k = 0; k < 8; k++) r.v[k] = a.v[k] * b.v[k];
+    return r;
+}
+
 // a * b + c with one rounding
 Q2N_INLINE Q2N_TARGET V8 V8_FMADD(V8 a, V8 b, V8 c) {
     V8 r;
@@ -549,6 +577,9 @@ Q2N_INLINE Q2N_TARGET double V8_REDUCE(V8 a) {
     return ((t[0] + t[4]) + (t[2] + t[6])) + ((t[1] + t[5]) + (t[3] + t[7]));
 }
 
+// The part of _fused.h that does not depend on the sample type
+#include "_fused.h"
+
 #define KNAME(name) Q2N_PASTE(Q2N_PASTE(name, Q2N_DT), Q2N_ISA)
 
 #define Q2N_T double
@@ -556,6 +587,7 @@ Q2N_INLINE Q2N_TARGET double V8_REDUCE(V8 a) {
 #define V8_LOAD V8_LOAD_F64
 #include "_prepare.h"
 #include "_direct.h"
+#include "_fused.h"
 #undef Q2N_T
 #undef Q2N_DT
 #undef V8_LOAD
@@ -565,6 +597,7 @@ Q2N_INLINE Q2N_TARGET double V8_REDUCE(V8 a) {
 #define V8_LOAD V8_LOAD_F32
 #include "_prepare.h"
 #include "_direct.h"
+#include "_fused.h"
 #undef Q2N_T
 #undef Q2N_DT
 #undef V8_LOAD
@@ -574,6 +607,7 @@ Q2N_INLINE Q2N_TARGET double V8_REDUCE(V8 a) {
 #define V8_LOAD V8_LOAD_U8
 #include "_prepare.h"
 #include "_direct.h"
+#include "_fused.h"
 #undef Q2N_T
 #undef Q2N_DT
 #undef V8_LOAD
@@ -583,6 +617,7 @@ Q2N_INLINE Q2N_TARGET double V8_REDUCE(V8 a) {
 #define V8_LOAD V8_LOAD_U16
 #include "_prepare.h"
 #include "_direct.h"
+#include "_fused.h"
 #undef Q2N_T
 #undef Q2N_DT
 #undef V8_LOAD
@@ -595,6 +630,7 @@ static const Kernels ISA(kernels) = {
     Q2N_DIRECT,
     {ISA(prepare_f64), ISA(prepare_f32), ISA(prepare_u8), ISA(prepare_u16)},
     {ISA(direct_f64), ISA(direct_f32), ISA(direct_u8), ISA(direct_u16)},
+    {ISA(fused_f64), ISA(fused_f32), ISA(fused_u8), ISA(fused_u16)},
 };
 
 #undef V8
@@ -602,6 +638,7 @@ static const Kernels ISA(kernels) = {
 #undef V8_SET1
 #undef V8_ADD
 #undef V8_SUB
+#undef V8_MUL
 #undef V8_FMADD
 #undef V8_REVERSE
 #undef V8_STORE

@@ -32,7 +32,10 @@ converting first.
 
 `ws` is the side of a block, an integer of at least 2. `stride` is the
 distance between the origins of adjacent blocks, an integer of at least 1,
-and defaults to `ws`. There are `ceil(height / stride)` rows and
+and defaults to `ws`. They are the `Q_blocks_size` and the `Q_shift` of the
+MATLAB toolbox, whose evaluation script uses 32 for both. Both are part of
+the definition of the index: another block size or stride gives another
+value. There are `ceil(height / stride)` rows and
 `ceil(width / stride)` columns of blocks. Blocks beyond the bottom and right
 edges read the image through its symmetric reflection.
 
@@ -44,12 +47,16 @@ than twice the height or the width.
 
 When `ws` is a multiple of `stride`, overlapping blocks share the work on
 their pixels, and the cost of a call is close to that of blocks of size
-`stride` without overlap.
+`stride` without overlap. This holds for `algorithm="moments"`. With
+`algorithm="fastcd"` the blocks share the reading of their pixels and the
+statistics of their tiles, but every block is summed on its own (see
+[Algorithms](#algorithms)).
 
 ## `q2n`
 
 ```python
-q2n(reference, test, ws=32, stride=None, *, workers=1, backend="auto") -> float
+q2n(reference, test, ws=32, stride=None, *, workers=1, backend="auto",
+    algorithm="auto") -> float
 ```
 
 Return the Q2n index of `test` against `reference`: the mean of the values
@@ -62,6 +69,7 @@ of the blocks, as a Python float.
 | `stride` | The distance between blocks; `ws` when `None` |
 | `workers` | The number of threads over which the tiles are divided, at least 1 |
 | `backend` | `"auto"`, `"numpy"` or `"mkl"`: the matrix-product library for images with more than four bands |
+| `algorithm` | `"auto"`, `"moments"` or `"fastcd"`: how the covariance of a block is obtained; see [Algorithms](#algorithms) |
 
 Raises `ValueError` if the images differ in shape, if an argument is out of
 range, or if the blocks do not fit the image as described above; `TypeError`
@@ -74,7 +82,8 @@ bands, and it is NaN if a block contains a value that is not finite.
 ## `q2n_map`
 
 ```python
-q2n_map(reference, test, ws=32, stride=None, *, workers=1, backend="auto") -> numpy.ndarray
+q2n_map(reference, test, ws=32, stride=None, *, workers=1, backend="auto",
+        algorithm="auto") -> numpy.ndarray
 ```
 
 Return the value of every block, as a new `float64` array of shape
@@ -85,7 +94,7 @@ exceptions are those of `q2n`, and `q2n` returns the mean of this array.
 ## `Q2nPlan`
 
 ```python
-Q2nPlan(shape, ws=32, stride=None, *, workers=1, backend="auto")
+Q2nPlan(shape, ws=32, stride=None, *, workers=1, backend="auto", algorithm="auto")
 ```
 
 A reusable computation for image pairs of one shape. A plan holds the block
@@ -131,6 +140,7 @@ All attributes are read-only.
 | `block_shape` | `(rows, columns)` of blocks, the shape of a map |
 | `workers` | The number of workers |
 | `backend` | The matrix-product library selected, `"numpy"` or `"mkl"` |
+| `algorithm` | The algorithm selected, `"moments"` or `"fastcd"`; never `"auto"` |
 
 ### Threads and plans
 
@@ -143,11 +153,20 @@ The result does not depend on the number of workers.
 
 ### Memory
 
-A plan holds `8 (bands^2 + 4 bands)` bytes per tile, a tile being one block,
-or one `stride` by `stride` square when `ws` is a multiple of `stride`. For
-images with more than four bands, each worker also holds a workspace for
-the centered samples of a batch of tiles: about 8 MiB, or the samples of
-one tile of both images if that is more. Images with at most four bands need no workspace.
+With `algorithm="moments"`, a plan holds `8 (bands^2 + 4 bands)` bytes per
+tile, a tile being one block, or one `stride` by `stride` square when `ws`
+is a multiple of `stride`. For images with more than four bands, each worker
+also holds a workspace for the centered samples of a batch of tiles: about
+8 MiB, or the samples of one tile of both images if that is more. Images
+with at most four bands need no workspace.
+
+With `algorithm="fastcd"`, each worker holds the pixels of one block of both
+images as records of `dimension` doubles, `16 ws^2 dimension` bytes, and the
+workspace of a fused sum, which grows like `dimension log dimension` and
+does not depend on the block. Nothing is held per block. When `ws` is a
+multiple of `stride`, a worker instead holds the records of the tiles of a
+strip of adjacent block columns, about 4 MiB or those of one block if that
+is more.
 
 ## `runtime_info`
 
@@ -165,15 +184,47 @@ Return what the package selected on this machine.
 | `backend` | The library that `backend="auto"` selects: `"mkl"` or `"numpy"` |
 | `backend_version` | The version of MKL, or of NumPy |
 | `numpy` | The version of NumPy |
+| `fastcd` | The version of fastCD compiled into the package |
+| `fastcd_kernel` | The kernel that fastCD runs its fused sums with on this processor: `"avx512"`, `"avx2"` or `"portable"` |
 
 The instruction set is chosen when the package is imported, as the widest
 that both the build and the processor support. AVX-512 is used when the
 processor has AVX-512F, DQ, BW and VL; AVX2 when it has AVX2 and FMA.
+fastCD chooses the kernel of its fused sums by its own rule: AVX-512 with
+AVX-512F, AVX2 with AVX2 and FMA, in builds for x86-64 with GCC or Clang,
+and its portable kernel otherwise.
+
+## Algorithms
+
+Every block needs one hypercomplex quantity, the covariance of its
+normalized pixels. The package obtains it in one of two ways, and
+`algorithm` selects between them. Both give the value of the definition to
+rounding error; they round differently, so their values differ in the last
+digits.
+
+| `algorithm` | Evaluation |
+| --- | --- |
+| `"moments"` | The matrix of real cross moments of every tile, contracted with the signs of the algebra. Its cost grows with the square of the number of bands, and blocks that overlap share their tiles |
+| `"fastcd"` | One fused sum of products of [fastCD](https://git.tanuki-cd.com/algebraity/fastCD) per block: the sum of the products of its pixels, in `O(N log N)` operations per pixel for an algebra of dimension `N`, without forming the products. Blocks that overlap share the records and the statistics of their tiles, and each block is summed on its own |
+| `"auto"` | The one that was measured to be faster for the number of bands, the number of tiles a block is merged from, and the kernel of the fused sums on this processor |
+
+The fused sums need no matrix-product library and ignore `backend`. They
+read `float64`, `float32`, `uint8` and `uint16` images in place, divide the
+blocks among the `workers`, and mark the same blocks for evaluation from
+their normalized samples as the moments do. `"auto"` never selects them for
+images with at most four bands, and selects them only where
+[the benchmark](benchmark.md#algorithms) measured them faster: without
+overlap from eight bands on with the AVX-512 and AVX2 kernels of fastCD, and
+with overlap only in high dimensions. With the portable kernel of fastCD
+`"auto"` is always `"moments"`.
+
+fastCD 1.5.0 is compiled into the extension module from the sources in
+`vendor/fastcd`; the `pyfastcd` package is not needed and is not used.
 
 ## Backends
 
-`backend` matters only for images with more than four bands, whose cross
-moments are matrix products.
+`backend` matters only for `algorithm="moments"` and images with more than
+four bands, whose cross moments are matrix products.
 
 | `backend` | Library |
 | --- | --- |

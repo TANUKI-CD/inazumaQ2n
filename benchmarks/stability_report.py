@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Render the accuracy tables, CSV summary and key figures from stability.py results.
 
-I is inazumaq2n, T is inazumaq2n with the block merged from four tiles, U is
+I is inazumaq2n with its moments, F is inazumaq2n with the fused sums of
+fastCD, T is I and G is F with the block merged from four tiles, U is
 inazumaq2n without the evaluation by definition of marked blocks, and Q and
 D evaluate the definition pixel by pixel with pyfastcd's quasilinear and
-direct products. The same tables are written to the study directory and,
-with --update-docs, into the delimited accuracy section of docs/stability.md.
+direct products. Studies made before the fused sums have no F, and their
+tables are rendered as they were. The same tables are written to the study
+directory and, with --update-docs, into the delimited accuracy section of
+docs/stability.md.
 """
 
 from __future__ import annotations
@@ -35,9 +38,9 @@ HAZARDS = (
     "scaled_up",
     "overflow",
 )
-METHODS = ("I", "T", "U", "Q", "D")
-MAIN = ("I", "Q", "D")
-GUARDED = ("I", "U", "Q", "D")
+METHODS = ("I", "F", "T", "G", "U", "Q", "D")
+MAIN = ("I", "F", "Q", "D")
+GUARDED = ("I", "F", "U", "Q", "D")
 SIDE = 32
 FAMILY_BANDS = (4, 16)
 # An error above this is a different value, not a rounding error
@@ -126,6 +129,13 @@ def wrong(rows: Rows, method: str) -> int:
     )
 
 
+def measured(document: dict[str, Any], methods: tuple[str, ...] = METHODS) -> Any:
+    """Return those of some methods that a study measured, in their order."""
+    samples = document["samples"]
+    present = samples[0]["methods"] if samples else {}
+    return tuple(m for m in methods if m in present)
+
+
 def section(text: str) -> str | None:
     """Return the delimited accuracy section of a document, or None without markers."""
     if (
@@ -167,7 +177,7 @@ def summarize(document: dict[str, Any]) -> Rows:
             groups.setdefault((name, "all", row["side"]), []).append(row)
     summaries = []
     for (family, bands, side), rows in groups.items():
-        for method in METHODS:
+        for method in measured(document):
             eta = values(rows, method, "eta")
             relative = values(rows, method, "relative")
             summaries.append(
@@ -213,10 +223,24 @@ def render(document: dict[str, Any]) -> str:
         raise ValueError("accuracy study did not finish; refusing a partial table")
     samples = document["samples"]
     side = max({r["side"] for r in samples}, key=lambda s: (s == SIDE, s))
+    main, guarded = measured(document, MAIN), measured(document, GUARDED)
+    fused = "F" in main
+    names, others = " / ".join(main), " / ".join(main[1:])
+    sums = measured(document, ("I", "F", "G"))
+    sums_names = " / ".join(sums)
+    guards = " / ".join(guarded)
     lines = [
         f"{len(samples):,} block pairs from the {document['profile']} profile. I is "
-        "inazumaQ2n; Q and D evaluate the definition pixel by pixel with the products of "
-        "pyfastcd's quasilinear and direct algorithms; T is inazumaQ2n with the block "
+        + (
+            "inazumaQ2n with its moments and F inazumaQ2n with the fused sums of "
+            "fastCD; "
+            if fused
+            else "inazumaQ2n; "
+        )
+        + "Q and D evaluate the definition pixel by pixel with the products of "
+        "pyfastcd's quasilinear and direct algorithms; "
+        + ("G is F and " if "G" in sums else "")
+        + "T is inazumaQ2n with the block "
         "merged from four tiles; U is inazumaQ2n without the evaluation by definition of "
         "the blocks its guards mark. B is the number of bands and N the dimension of the "
         "algebra. eta is the absolute error of the value of a block in units of "
@@ -229,29 +253,30 @@ def render(document: dict[str, Any]) -> str:
     lines += [
         f"**Typical inputs, blocks of {side} by {side} pixels**",
         "",
-        "| B | N | blocks | median eta I / Q / D | p99 eta I / Q / D | max eta I / Q / D "
-        "| I at least as accurate as Q / D |",
+        f"| B | N | blocks | median eta {names} | p99 eta {names} | max eta {names} "
+        f"| I at least as accurate as {others} |",
         "|---:|---:|---:|:---|:---|:---|:---|",
     ]
     for bands in band_counts:
         rows = [r for r in typical if r["bands"] == bands]
+        shares = " / ".join(f"{at_least(rows, m):.0%}" for m in main[1:])
         lines.append(
-            f"| {bands} | {rows[0]['dimension']} | {len(rows)} | {joined(rows, MAIN, median)} "
-            f"| {joined(rows, MAIN, p99)} | {joined(rows, MAIN, largest)} "
-            f"| {at_least(rows, 'Q'):.0%} / {at_least(rows, 'D'):.0%} |"
+            f"| {bands} | {rows[0]['dimension']} | {len(rows)} | {joined(rows, main, median)} "
+            f"| {joined(rows, main, p99)} | {joined(rows, main, largest)} "
+            f"| {shares} |"
         )
     lines += [
         "",
         "**Relative error, typical inputs**",
         "",
-        "| B | median relative error I / Q / D | max relative error I / Q / D |",
+        f"| B | median relative error {names} | max relative error {names} |",
         "|---:|:---|:---|",
     ]
     for bands in band_counts:
         rows = [r for r in typical if r["bands"] == bands]
         lines.append(
-            f"| {bands} | {joined(rows, MAIN, lambda r, m: median(r, m, 'relative'))} "
-            f"| {joined(rows, MAIN, lambda r, m: largest(r, m, 'relative'))} |"
+            f"| {bands} | {joined(rows, main, lambda r, m: median(r, m, 'relative'))} "
+            f"| {joined(rows, main, lambda r, m: largest(r, m, 'relative'))} |"
         )
 
     sized = select(document, TYPICAL, None)
@@ -262,14 +287,14 @@ def render(document: dict[str, Any]) -> str:
             "",
             "**Block size, typical inputs**",
             "",
-            "| B | block | blocks | median eta I / Q / D | max eta I / Q / D |",
+            f"| B | block | blocks | median eta {names} | max eta {names} |",
             "|---:|---:|---:|:---|:---|",
         ]
         for bands, size in sizes:
             rows = [r for r in sized if r["bands"] == bands and r["side"] == size]
             lines.append(
-                f"| {bands} | {size} x {size} | {len(rows)} | {joined(rows, MAIN, median)} "
-                f"| {joined(rows, MAIN, largest)} |"
+                f"| {bands} | {size} x {size} | {len(rows)} | {joined(rows, main, median)} "
+                f"| {joined(rows, main, largest)} |"
             )
 
     lines += [
@@ -286,6 +311,26 @@ def render(document: dict[str, Any]) -> str:
             f"| {joined(rows, ('I', 'T'), largest)} | {tied(rows, 'T'):.0%} |"
         )
 
+    if fused:
+        lines += [
+            "",
+            "**Fused sums of fastCD against the moments, typical inputs, blocks of "
+            f"{side} by {side}**",
+            "",
+            f"| B | N | median eta {sums_names} | p99 eta {sums_names} "
+            f"| max eta {sums_names} | F at least as accurate as I "
+            "| F as accurate as I |",
+            "|---:|---:|:---|:---|:---|---:|---:|",
+        ]
+        for bands in band_counts:
+            rows = [r for r in typical if r["bands"] == bands]
+            better = sum(r["comparisons"]["F"] != "better" for r in rows) / len(rows)
+            lines.append(
+                f"| {bands} | {rows[0]['dimension']} | {joined(rows, sums, median)} "
+                f"| {joined(rows, sums, p99)} | {joined(rows, sums, largest)} "
+                f"| {better:.0%} | {tied(rows, 'F'):.0%} |"
+            )
+
     families = [f for f in document["corpus"]["families"] if f not in OFFSETS + HAZARDS]
     for bands in FAMILY_BANDS:
         rows_b = [r for r in samples if r["bands"] == bands and r["side"] == side]
@@ -295,15 +340,15 @@ def render(document: dict[str, Any]) -> str:
             "",
             f"**Families, B = {bands}**",
             "",
-            "| family | blocks | median eta I / Q / D | max eta I / Q / D | marked |",
+            f"| family | blocks | median eta {names} | max eta {names} | marked |",
             "|:---|---:|:---|:---|---:|",
         ]
         for family in families:
             rows = [r for r in rows_b if r["family"] == family]
             if rows:
                 lines.append(
-                    f"| {family} | {len(rows)} | {joined(rows, MAIN, median)} "
-                    f"| {joined(rows, MAIN, largest)} | {sum(r['marked'] for r in rows)} |"
+                    f"| {family} | {len(rows)} | {joined(rows, main, median)} "
+                    f"| {joined(rows, main, largest)} | {sum(r['marked'] for r in rows)} |"
                 )
 
     offsets = select(document, OFFSETS, side)
@@ -312,14 +357,14 @@ def render(document: dict[str, Any]) -> str:
             "",
             "**Means far from zero**, all band counts pooled",
             "",
-            "| family | blocks | median eta I / U / Q / D | max eta I / U / Q / D |",
+            f"| family | blocks | median eta {guards} | max eta {guards} |",
             "|:---|---:|:---|:---|",
         ]
         for family in OFFSETS:
             rows = [r for r in offsets if r["family"] == family]
             lines.append(
-                f"| {family} | {len(rows)} | {joined(rows, GUARDED, median)} "
-                f"| {joined(rows, GUARDED, largest)} |"
+                f"| {family} | {len(rows)} | {joined(rows, guarded, median)} "
+                f"| {joined(rows, guarded, largest)} |"
             )
 
     hazards = select(document, HAZARDS, side)
@@ -328,15 +373,15 @@ def render(document: dict[str, Any]) -> str:
             "",
             "**Branches of the definition and extreme scales**, all band counts pooled",
             "",
-            "| family | blocks | median eta I / U / Q / D | results off by more than "
-            f"{WRONG:g}, I / U / Q / D |",
+            f"| family | blocks | median eta {guards} | results off by more than "
+            f"{WRONG:g}, {guards} |",
             "|:---|---:|:---|:---|",
         ]
         for family in HAZARDS:
             rows = [r for r in hazards if r["family"] == family]
-            counts = " / ".join(str(wrong(rows, m)) for m in GUARDED)
+            counts = " / ".join(str(wrong(rows, m)) for m in guarded)
             lines.append(
-                f"| {family} | {len(rows)} | {joined(rows, GUARDED, median)} | {counts} |"
+                f"| {family} | {len(rows)} | {joined(rows, guarded, median)} | {counts} |"
             )
     lines += ["", FOOTER]
     return "\n".join(lines) + "\n"
@@ -358,13 +403,15 @@ def key_figures(document: dict[str, Any]) -> dict[str, Any]:
     band_counts = sorted({r["bands"] for r in typical})
     per_bands = {b: [r for r in typical if r["bands"] == b] for b in band_counts}
     ordinary = [r for r in samples if r["family"] not in OFFSETS + HAZARDS]
+    methods, guarded = measured(document), measured(document, GUARDED)
+    compared = measured(document, ("F", "Q", "D"))
     ratios = {
         m: [
             median(rows, m) / median(rows, "I")
             for rows in per_bands.values()
             if median(rows, "I")
         ]
-        for m in ("Q", "D")
+        for m in compared
     }
     figures: dict[str, Any] = {
         "profile": document["profile"],
@@ -372,25 +419,23 @@ def key_figures(document: dict[str, Any]) -> dict[str, Any]:
         "families": len(document["corpus"]["families"]),
         "bands": [min(r["bands"] for r in samples), max(r["bands"] for r in samples)],
         "typical_median_eta": {
-            str(b): {m: median(rows, m) for m in METHODS}
+            str(b): {m: median(rows, m) for m in methods}
             for b, rows in per_bands.items()
         },
-        "typical_max_eta": {m: largest(typical, m) for m in METHODS},
+        "typical_max_eta": {m: largest(typical, m) for m in methods},
         "typical_median_ratio_over_I": {
             m: [min(r), max(r)] if r else None for m, r in ratios.items()
         },
-        "typical_I_at_least_as_accurate": {m: at_least(typical, m) for m in ("Q", "D")},
-        "ordinary_max_eta": {m: largest(ordinary, m) for m in METHODS},
-        "ordinary_I_at_least_as_accurate": {
-            m: at_least(ordinary, m) for m in ("Q", "D")
-        },
+        "typical_I_at_least_as_accurate": {m: at_least(typical, m) for m in compared},
+        "ordinary_max_eta": {m: largest(ordinary, m) for m in methods},
+        "ordinary_I_at_least_as_accurate": {m: at_least(ordinary, m) for m in compared},
         "offsets_median_eta": {
-            f: {m: median(select(document, (f,), side), m) for m in GUARDED}
+            f: {m: median(select(document, (f,), side), m) for m in guarded}
             for f in OFFSETS
             if select(document, (f,), side)
         },
         "hazards_wrong": {
-            f: {m: wrong(select(document, (f,), side), m) for m in GUARDED}
+            f: {m: wrong(select(document, (f,), side), m) for m in guarded}
             for f in HAZARDS
             if select(document, (f,), side)
         },
@@ -400,7 +445,7 @@ def key_figures(document: dict[str, Any]) -> dict[str, Any]:
             if select(document, (f,), side)
         },
         "nonfinite": {
-            m: sum(r["methods"][m]["eta"] is None for r in samples) for m in METHODS
+            m: sum(r["methods"][m]["eta"] is None for r in samples) for m in methods
         },
         "marked": sum(r["marked"] for r in samples),
         "marked_ordinary": sum(r["marked"] for r in ordinary),

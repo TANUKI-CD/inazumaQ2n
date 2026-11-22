@@ -2,13 +2,18 @@
 """Exact-reference accuracy study of the value of a Q2n block.
 
 Every Q2n index is the mean of the values of its blocks, so the study
-measures the value of one block, computed five ways from the same stored
+measures the value of one block, computed seven ways from the same stored
 samples:
 
 - I: inazumaq2n, the block evaluated from its own moments, as ``q2n`` and
-  ``q2n_map`` evaluate blocks that do not overlap;
+  ``q2n_map`` evaluate blocks that do not overlap with
+  ``algorithm="moments"``;
+- F: inazumaq2n, the block evaluated by a fused sum of fastCD, as with
+  ``algorithm="fastcd"``, behind the same guards as I;
 - T: inazumaq2n, the block merged from four tiles, as for blocks that
   overlap with a stride of half the block size;
+- G: F with the block merged from four tiles, as ``algorithm="fastcd"``
+  evaluates blocks that overlap with a stride of half the block size;
 - U: I without the evaluation by definition of the blocks that the guards of
   the package mark, to show what the guards change;
 - Q and D: the definition evaluated pixel by pixel in NumPy, with the pixel
@@ -57,10 +62,10 @@ from exact import exact_value, literal_value  # noqa: E402
 import inazumaq2n  # noqa: E402
 from inazumaq2n import Q2nPlan, _core, q2n_map  # noqa: E402
 
-SCHEMA = "inazumaq2n-stability-v1"
+SCHEMA = "inazumaq2n-stability-v2"
 UNIT = Decimal(2) ** -53
-METHODS = ("I", "T", "U", "Q", "D")
-COMPARED = ("T", "U", "Q", "D")
+METHODS = ("I", "F", "T", "G", "U", "Q", "D")
+COMPARED = ("F", "T", "G", "U", "Q", "D")
 
 TYPICAL = ("uniform", "gaussian")
 OFFSETS = {"offset_1e3": 1e3, "offset_1e6": 1e6, "offset_1e9": 1e9, "offset_1e12": 1e12}
@@ -202,10 +207,16 @@ def measured_values(x: np.ndarray, y: np.ndarray) -> tuple[dict[str, float], boo
     """Return the value of the block by every method, and whether the guards mark it."""
     side = x.shape[0]
     values = {}
-    with Q2nPlan(x.shape, side, backend="numpy") as plan:
+    with Q2nPlan(x.shape, side, algorithm="fastcd") as plan:
+        plan._run(x, y, None)
+        values["F"] = float(plan._values[0])
+        fused_marked = bool(plan._risk[0])
+    with Q2nPlan(x.shape, side, backend="numpy", algorithm="moments") as plan:
         plan._run(x, y, None)
         values["I"] = float(plan._values[0])
         marked = bool(plan._risk[0])
+        if fused_marked != marked:
+            raise AssertionError("the guards of the two algorithms mark differently")
         unguarded = np.empty(1)
         _core.finish(
             plan._grams,
@@ -221,7 +232,10 @@ def measured_values(x: np.ndarray, y: np.ndarray) -> tuple[dict[str, float], boo
             np.empty(1, dtype=np.uint8),
         )
         values["U"] = float(unguarded[0])
-    values["T"] = float(q2n_map(x, y, side, side // 2, backend="numpy")[0, 0])
+    values["T"] = float(
+        q2n_map(x, y, side, side // 2, backend="numpy", algorithm="moments")[0, 0]
+    )
+    values["G"] = float(q2n_map(x, y, side, side // 2, algorithm="fastcd")[0, 0])
     for name, algorithm in (("Q", "quasilinear"), ("D", "direct")):
         values[name] = float(baseline.q2n_map(x, y, side, algorithm=algorithm)[0, 0])
     return values, marked
@@ -373,6 +387,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     checks = [r["precision_check"] for r in samples if "precision_check" in r]
     document = {
         "schema": SCHEMA,
+        "methods": list(METHODS),
         "completed": True,
         "profile": args.profile,
         "seed": args.seed,

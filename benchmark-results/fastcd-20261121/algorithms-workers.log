@@ -1,0 +1,10 @@
+workers: 32 bands (N = 32) 512x512 float64 32/32 workers 1: moments 55.641 ms, fastcd 30.333 ms, auto 29.679 ms, moments, numpy 56.450 ms; auto fastcd, fastest fastcd
+workers: 256 bands (N = 256) 256x256 float64 32/32 workers 1: moments 177.291 ms, fastcd 76.707 ms, auto 78.909 ms, moments, numpy 221.894 ms; auto fastcd, fastest fastcd
+workers: 32 bands (N = 32) 512x512 float64 32/32 workers 2: moments 34.863 ms, fastcd 16.426 ms, auto 21.106 ms, moments, numpy 39.734 ms; auto fastcd, fastest fastcd
+workers: 256 bands (N = 256) 256x256 float64 32/32 workers 2: moments 131.502 ms, fastcd 48.832 ms, auto 45.745 ms, moments, numpy 139.343 ms; auto fastcd, fastest fastcd
+workers: 32 bands (N = 32) 512x512 float64 32/32 workers 4: moments 20.066 ms, fastcd 6.564 ms, auto 6.388 ms, moments, numpy 24.784 ms; auto fastcd, fastest fastcd
+workers: 256 bands (N = 256) 256x256 float64 32/32 workers 4: moments 76.743 ms, fastcd 28.012 ms, auto 24.934 ms, moments, numpy 87.755 ms; auto fastcd, fastest fastcd
+workers: 32 bands (N = 32) 512x512 float64 32/32 workers 8: moments 14.697 ms, fastcd 5.136 ms, auto 6.481 ms, moments, numpy 15.787 ms; auto fastcd, fastest fastcd
+workers: 256 bands (N = 256) 256x256 float64 32/32 workers 8: moments 55.168 ms, fastcd 22.608 ms, auto 18.257 ms, moments, numpy 55.756 ms; auto fastcd, fastest fastcd
+wrote algorithms-workers.json
+wrote algorithms-workers.md

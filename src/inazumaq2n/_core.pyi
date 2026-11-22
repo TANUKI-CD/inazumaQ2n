@@ -41,6 +41,42 @@ def finish(
     risk: Any,
     /,
 ) -> None: ...
+def fused(
+    x: Any,
+    y: Any,
+    height: int,
+    width: int,
+    bands: int,
+    dimension: int,
+    origins: Any,
+    side: int,
+    work: Any,
+    values: Any,
+    risk: Any,
+    /,
+) -> None: ...
+def fused_tiles(
+    x: Any,
+    y: Any,
+    height: int,
+    width: int,
+    bands: int,
+    dimension: int,
+    stride: int,
+    q: int,
+    row0: int,
+    rows: int,
+    col0: int,
+    cols: int,
+    pitch: int,
+    work: Any,
+    values: Any,
+    risk: Any,
+    /,
+) -> None: ...
+def fused_tiles_work(tile_pixels: int, dimension: int, q: int, cols: int, /) -> int: ...
+def fused_work(pixels: int, dimension: int, /) -> int: ...
+def fastcd() -> tuple[str, str]: ...
 def gram_batch(
     gemm: int,
     set_threads: int | None,

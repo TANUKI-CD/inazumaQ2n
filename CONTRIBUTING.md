@@ -13,6 +13,7 @@ python -m mypy
 python -m ruff check src tests benchmarks tools setup.py
 python -m ruff format --check src tests benchmarks tools setup.py
 python tools/generate_kernels.py --check
+python tools/vendor_fastcd.py --check
 python tools/check_archives.py
 ```
 
@@ -21,6 +22,19 @@ extension module `inazumaq2n._core`. After changing a C source, run
 `python -m pip install -e .` again to rebuild it. The tests under
 `benchmarks/` cover the baseline, the benchmark and the stability study,
 and need pyfastcd, threadpoolctl and Matplotlib, which `dev` includes.
+
+The tests of `benchmarks/test_toolboxes.py` compare the package with the
+`q2n` of the MATLAB pansharpening toolbox, run under GNU Octave. They are
+skipped unless Octave is on the path and the files of the toolbox have been
+fetched, which this does once:
+
+```sh
+python benchmarks/toolboxes.py fetch matlab
+```
+
+The files are downloaded at a pinned commit into `benchmarks/.toolboxes`,
+verified by their SHA-256, and never committed or distributed: they keep
+the license of their repository.
 
 ## Layout
 
@@ -31,13 +45,22 @@ and need pyfastcd, threadpoolctl and Matplotlib, which `dev` includes.
 - `src/inazumaq2n/_isa.h`: the kernels of one instruction set. `_core.c`
   includes it once per instruction set. It defines an eight-lane vector of
   doubles and its operations for AVX-512, AVX2, NEON and plain C, and then
-  includes the two files below once per sample type.
+  includes the three files below once per sample type.
 - `src/inazumaq2n/_prepare.h`: centering of tiles with any number of bands.
 - `src/inazumaq2n/_direct.h`: the kernels for one to four bands, generated
   by `tools/generate_kernels.py`. Do not edit it; change the generator and
   run it.
+- `src/inazumaq2n/_fused.h`: the records and the band statistics of a
+  block or a tile, for the fused sums of fastCD. The routines that sum the
+  blocks, `fused` and `fused_tiles`, are in `_core.c`.
+- `vendor/fastcd`: the sources of fastCD that `setup.py` compiles into the
+  extension module. Do not edit them; `tools/vendor_fastcd.py` writes the
+  snapshot from a checkout of fastCD and verifies it.
 - `src/inazumaq2n/_plan.py`: `Q2nPlan`, the public functions, the geometry
   of blocks and tiles, and the dispatch between the kernels.
+- `src/inazumaq2n/_auto.py`: the table by which `algorithm="auto"` selects
+  the moments or the fused sums, from the algorithms protocol of the
+  benchmark.
 - `src/inazumaq2n/_blas.py`: the optional MKL provider.
 - `src/inazumaq2n/_fallback.py`: the sign table, and the evaluation of one
   marked block from its normalized samples.
@@ -50,6 +73,11 @@ and need pyfastcd, threadpoolctl and Matplotlib, which `dev` includes.
 - `benchmarks/baseline.py`: the definition evaluated pixel by pixel with
   the products of pyfastcd, the comparison of the benchmark and of the
   stability study.
+- `benchmarks/toolbox.py`: a NumPy port of the recursion of the reference
+  toolboxes, which the benchmark times.
+- `benchmarks/toolboxes.py`: the published toolboxes themselves, fetched at
+  pinned commits and run as they are, the MATLAB one under GNU Octave with
+  `benchmarks/octave/run_q2n.m`.
 - `benchmarks/benchmark.py`: the speed benchmark.
 - `benchmarks/stability.py`, `stability_report.py`, `stability_plots.py`
   and `stability_study.py`: the stability study, its tables, its charts and
