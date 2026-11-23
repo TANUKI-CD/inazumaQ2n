@@ -1,3 +1,4 @@
+![inaaumaQ2n](https://git.tanuki-cd.com/algebraity/inazumaq2n/raw/branch/main/assets/inazumaq2n.png)
 # inazumaQ2n - v0.1.0 (unreleased)
 
 inazumaQ2n is a fast implementation of the Q2n image quality index for images with any number of bands, written for researchers and engineers who evaluate pansharpening, fusion, and restoration of multispectral and hyperspectral images. Q2n compares a test image with a reference image block by block, treating every pixel as an element of a Cayley-Dickson algebra (the complex numbers for two bands, the quaternions for four, the octonions for eight, and so on), and its definition multiplies the pixels of every block in that algebra.
