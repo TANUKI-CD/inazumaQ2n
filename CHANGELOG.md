@@ -18,7 +18,7 @@ version is defined in `src/inazumaq2n/_version.py`.
 - `runtime_info`: the instruction set and matrix-product library selected.
 - Evaluation from centered real moments of the blocks: one `B` by `B`
   matrix of cross moments per tile for an image with `B` bands, contracted
-  with the Cayley–Dickson signs, with no hypercomplex product of pixels and
+  with the Cayley-Dickson signs, with no hypercomplex product of pixels and
   no padded copy of the image or of its bands.
 - Shared tiles for overlapping blocks whose size is a multiple of the
   stride, so that each pixel is read once.
@@ -39,9 +39,9 @@ version is defined in `src/inazumaq2n/_version.py`.
   underflow.
 - A speed benchmark against the definition evaluated pixel by pixel with
   the direct and quasilinear products of pyfastcd (`benchmarks/benchmark.py`,
-  `benchmarks/baseline.py`), archived in `benchmark-results/t440-20261113/`.
+  `benchmarks/baseline.py`), archived in `benchmark-results/t440-20261122/`.
 - A stability study against an exact reference (`benchmarks/stability*.py`,
-  `tests/exact.py`), archived in `benchmark-results/stability-20261113/`,
+  `tests/exact.py`), archived in `benchmark-results/stability-20261121/`,
   and `tools/check_archives.py`.
 - `algorithm`: a second evaluation of the covariance of a block, as one
   fused sum of products of fastCD, in `O(N log N)` operations per pixel for
@@ -70,7 +70,4 @@ version is defined in `src/inazumaq2n/_version.py`.
   archived in `benchmark-results/toolboxes-20261121/` and tabulated in the
   README.
 - Methods F and G of the stability study, the fused sums of a block and of
-  a block merged from four tiles. The study was run again with them and is
-  archived in `benchmark-results/stability-20261121/`, which
-  `docs/stability.md` now presents; it reproduces every figure of the study
-  of 2026-11-13 for the methods that study measured.
+  a block merged from four tiles.

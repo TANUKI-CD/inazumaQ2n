@@ -1,0 +1,17 @@
+1 bands 512x512 32/32 uint8: direct, avx2 0.258 ms, direct, avx512 0.201 ms, matrix product, numpy 2.966 ms, matrix product, mkl 2.954 ms
+1 bands 193x207 24/12 float64: direct, avx2 0.136 ms, direct, avx512 0.142 ms, matrix product, numpy 0.478 ms, matrix product, mkl 0.516 ms
+2 bands 384x448 32/32 float64: direct, avx2 0.463 ms, direct, avx512 0.373 ms, matrix product, numpy 2.154 ms, matrix product, mkl 2.153 ms
+2 bands 193x207 24/12 uint8: direct, avx2 0.270 ms, direct, avx512 0.257 ms, matrix product, numpy 0.783 ms, matrix product, mkl 0.829 ms
+2 bands 512x512 64/32 float32: direct, avx2 0.812 ms, direct, avx512 0.572 ms, matrix product, numpy 4.350 ms, matrix product, mkl 4.279 ms
+3 bands 512x512 32/32 uint8: direct, avx2 1.227 ms, direct, avx512 0.856 ms, matrix product, numpy 5.428 ms, matrix product, mkl 5.117 ms
+3 bands 95x117 32/12 float64: direct, avx2 0.367 ms, direct, avx512 0.235 ms, matrix product, numpy 1.355 ms, matrix product, mkl 1.251 ms
+3 bands 384x448 64/64 float32: direct, avx2 0.654 ms, direct, avx512 0.410 ms, matrix product, numpy 3.107 ms, matrix product, mkl 2.933 ms
+4 bands 512x512 32/32 uint16: direct, avx2 1.937 ms, direct, avx512 1.124 ms, matrix product, numpy 6.369 ms, matrix product, mkl 6.159 ms
+4 bands 512x512 32/32 float64: direct, avx2 2.423 ms, direct, avx512 1.616 ms, matrix product, numpy 5.064 ms, matrix product, mkl 5.106 ms
+4 bands 384x448 64/64 uint8: direct, avx2 1.115 ms, direct, avx512 0.604 ms, matrix product, numpy 3.809 ms, matrix product, mkl 3.835 ms
+4 bands 193x207 24/12 float32: direct, avx2 0.667 ms, direct, avx512 0.583 ms, matrix product, numpy 1.280 ms, matrix product, mkl 1.364 ms
+4 bands 95x117 32/12 float64: direct, avx2 0.509 ms, direct, avx512 0.299 ms, matrix product, numpy 1.186 ms, matrix product, mkl 1.186 ms
+4 bands 1024x1024 32/32 uint16: direct, avx2 11.769 ms, direct, avx512 7.184 ms, matrix product, numpy 26.517 ms, matrix product, mkl 25.496 ms
+4 bands 256x320 16/8 uint8: direct, avx2 1.135 ms, direct, avx512 0.851 ms, matrix product, numpy 2.254 ms, matrix product, mkl 2.424 ms
+4 bands 300x300 8/8 float64: direct, avx2 0.954 ms, direct, avx512 0.771 ms, matrix product, numpy 1.600 ms, matrix product, mkl 1.686 ms
+wrote benchmark-results/t440-20261122/kernels.json

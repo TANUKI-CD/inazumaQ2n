@@ -1,0 +1,12 @@
+gray 512x512, uint8: one-shot 0.348 ms, plan 0.231 ms, fastCD quasilinear 22.627 ms, fastCD direct 23.439 ms
+RGB 512x512, uint8: one-shot 0.888 ms, plan 0.758 ms, fastCD quasilinear 67.881 ms, fastCD direct 65.857 ms
+RGB 512x512, uint8, block 64, stride 32: one-shot 1.056 ms, plan 0.868 ms, fastCD quasilinear 219.989 ms, fastCD direct 215.093 ms
+4 bands 512x512, uint16: one-shot 2.128 ms, plan 1.993 ms, fastCD quasilinear 66.198 ms, fastCD direct 63.947 ms
+8 bands 512x512, uint16: one-shot 5.522 ms, plan 5.438 ms, fastCD quasilinear 104.388 ms, fastCD direct 106.233 ms
+16 bands 512x512, float64: one-shot 12.545 ms, plan 12.291 ms, fastCD quasilinear 158.953 ms, fastCD direct 180.806 ms
+16 bands 512x512, float64, block 64, stride 32: one-shot 18.997 ms, plan 22.166 ms, plan, numpy 22.434 ms, fastCD quasilinear 556.324 ms, fastCD direct 628.548 ms
+32 bands 256x256, float64: one-shot 5.837 ms, plan 6.000 ms, fastCD quasilinear 75.945 ms, fastCD direct 97.936 ms
+32 bands 256x256, float64, block 64, stride 32: one-shot 15.140 ms, plan 14.716 ms, plan, numpy 15.967 ms, fastCD quasilinear 310.366 ms, fastCD direct 401.033 ms
+159 bands 200x200, float64: one-shot 69.204 ms, plan 70.850 ms, plan, numpy 82.960 ms, fastCD quasilinear 475.131 ms, fastCD direct 1237.683 ms
+159 bands 200x200, float64, block 64, stride 32: one-shot 104.414 ms, plan 99.926 ms, plan, numpy 118.796 ms, fastCD quasilinear 2728.186 ms, fastCD direct 5848.141 ms
+wrote benchmark-results/t440-20261122/calls.json

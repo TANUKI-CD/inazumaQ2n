@@ -1,134 +1,93 @@
 # Numerical stability
 
-## Summary
+The value of each block of a Q2n index is a ratio of statistics of the
+normalized pixels of the block, and inazumaQ2n evaluates it in a different order
+from its definition: from centered moments of the bands, or from one fused sum
+of products of the centered and scaled pixels, where the definition normalizes
+every sample, multiplies the pixels in the Cayley-Dickson algebra, and averages
+the products (see [Conventions and results](mathematics.md)). Every operation in
+either order rounds its result in binary64 arithmetic, and this page
+investigates whether inazumaQ2n loses accuracy compared with the definition
+evaluated pixel by pixel, on ordinary images and on inputs that strain the
+definition.
 
-inazumaQ2n evaluates the definition of Q2n (see
-[Conventions and results](mathematics.md)) in a different order from the
-definition itself: from centered moments of the bands, or from a fused sum
-of products of the centered and scaled pixels, where the definition
-normalizes every sample and multiplies the pixels in the Cayley–Dickson
-algebra. A study measured the value of one block, the quantity every Q2n
-index averages, on 8,988 block pairs against an exact reference. It compared
-both algorithms of inazumaQ2n, the moments and the fused sums of fastCD
-(`algorithm="moments"` and `algorithm="fastcd"`), with each other and
-with the definition evaluated pixel by pixel with the products of
-[pyfastcd](https://pypi.org/project/pyfastcd), the Python package of the
-[fastCD](https://git.tanuki-cd.com/algebraity/fastCD) library for
-Cayley–Dickson multiplication, with its quasilinear and with its direct
-algorithm. Errors are absolute errors of the value of a block in units of
-`u = 2^-53`, the unit roundoff of binary64 (see
-[Error measures](#error-measures)). In the items below, "inazumaQ2n" is
-its evaluation from moments unless the fused sums are named.
-
-- On typical inputs, the median error of inazumaQ2n is between 0.96 and 4.3
-  at every number of bands from 1 to 256, and that of the per-pixel
-  evaluation between 1.1 and 2.5. inazumaQ2n is the more accurate up to
-  four bands and somewhat less accurate above. The largest errors on typical
-  inputs are 15.9 for inazumaQ2n and 10.8 for the per-pixel evaluation, or
-  1.8e-15 and 1.4e-15 relative to the value.
-- With the fused sums of fastCD, the median error on typical inputs is
-  between 1.4 and 3.3 from 5 to 256 bands, where `algorithm="auto"` can
-  select them, and the largest is 13.5, or 1.6e-15 relative to the value.
-  They are at least as accurate as the moments in 59% to 79% of the blocks
-  at each of those band counts, and 75% overall. With one to four bands,
-  where `"auto"` never selects them, their median error is 2.0 to 4.0 and
-  the largest 16.7. Blocks that overlap, summed over the records of four
-  tiles, have a median error of 1.1 to 2.9 and a largest of 14.5.
-- On every block that the guards of the package mark, 2,520 in this corpus,
-  the two algorithms return the same bits: they mark the same blocks from
-  the same statistics and evaluate them the same way.
-- On 16-bit integer images the median error of inazumaQ2n rises to between
-  1.5 and 39, and its largest error is 155, about 1.7e-14, against 9.6 for
-  the per-pixel evaluation. With the fused sums it is between 2.7 and 59,
-  with a largest error of 234, about 2.6e-14, the largest of the study
-  outside the images whose mean is far from zero. The cause is described
-  below.
-- On inputs that strain the definition, inazumaQ2n is the more accurate: on
-  images whose mean is a million times their variation its median error is
-  5.8 against 101, and on samples whose products underflow it is 1.9 against
-  7,500.
-- inazumaQ2n gave the value of the definition on every block whose
-  reference band has a mean of exactly zero, and on every block whose squared
-  samples overflow. The per-pixel evaluation was wrong on 248 and on all 252
-  of those blocks.
-- The direct and quasilinear products of pyfastcd give the same accuracy to
-  within the noise of the corpus: the order of the definition, not the
-  product, determines the error of the per-pixel evaluation.
+The conclusion is that, measured against exact values on 8,988 block pairs, both
+algorithms of inazumaQ2n are accurate to a few units in the last place on
+typical inputs, as the per-pixel evaluation is: with its moments, the median
+error of inazumaQ2n is between 0.96 and 4.3 units of the unit roundoff at every
+number of bands from 1 to 256, against 1.1 to 2.5 for the per-pixel evaluation.
+On inputs that strain the definition, such as images whose mean is far larger
+than their variation and samples whose products underflow or whose squares
+overflow, inazumaQ2n is the more accurate, often by orders of magnitude, while
+on 16-bit integer images its long sums lose more accuracy than those of the
+per-pixel evaluation. The sections below explain where each evaluation rounds,
+describe how accuracy was measured, report and interpret the results, state
+which results are identical bit for bit on every machine, and end with what the
+results mean for code that uses inazumaQ2n, with the limitations of the study,
+and with how to check and reproduce it.
 
 ## Where rounding enters
 
-**The moments of inazumaQ2n.** For images with at most four bands, one
-kernel sums the centered squares and cross products of a tile in eight
-lanes, so that each lane adds `P / 8` products in sequence for a block of
-`P` pixels. For more bands, a kernel sums the centered squares of each band
-in sequence over the pixels, and the cross moments are a matrix product,
-whose order of summation belongs to the BLAS library. The block value is
-then formed from these moments with a few dozen further roundings per band,
-independent of `P`.
+The three evaluations add their long sums in different orders and over different
+quantities, and five properties of these sums predict the measurements below.
+
+**The moments of inazumaQ2n.** For images with at most four bands, one kernel
+sums the centered squares and cross products of a tile in eight lanes, so that
+each lane adds `P / 8` products in sequence for a block of `P` pixels. For more
+bands, a kernel sums the centered squares of each band in sequence over the
+pixels, and the cross moments are a matrix product, whose order of summation
+belongs to the BLAS library. The value of the block is then formed from these
+moments with a few dozen further roundings for each band, independently of `P`.
 
 **The fused sums of inazumaQ2n.** The statistics of the bands are the same
-sequential sums as those of the moments for more than four bands, bit for
-bit, at every number of bands. The covariance is then one fused sum of
-fastCD over the pixels of the block, each centered and scaled as it is
-read: the products of fastCD's algorithm are accumulated in eight lanes
-with fused multiply-adds, and its additions are applied once to the
-accumulated sums. No matrix is formed and nothing is contracted, so the
-rounding of a BLAS library and the `B^2` terms of the contraction do not
-enter. With one to four bands, where the moments use their eight-lane
-kernel, the sequential sums of the statistics are what makes the fused
-sums the less accurate of the two.
+sequential sums as those of the moments for more than four bands, bit for bit,
+at every number of bands. The covariance is then one fused sum of fastCD over
+the pixels of the block, each centered and scaled as it is read, in which the
+products of fastCD's algorithm are accumulated in eight lanes with fused
+multiply-adds and its additions are applied once to the accumulated sums. No
+matrix is formed and nothing is contracted, so neither the rounding of a BLAS
+library nor the `B^2` terms of the contraction enter, while with one to four
+bands, where the moments use their eight-lane kernel, the sequential sums of the
+statistics make the fused sums the less accurate of the two.
 
-**The per-pixel evaluation.** The definition normalizes every sample,
-multiplies every pixel, and averages the products, and NumPy forms each
-average by pairwise summation. It then subtracts the product of the means
-from the mean of the products: both are of the order of the dimension of the
-algebra, while their difference, the covariance, can be much smaller, and its
-rounding error is measured against the larger terms.
+**The per-pixel evaluation.** The definition normalizes every sample, multiplies
+every pixel, and averages the products, with NumPy forming each average by
+pairwise summation. It then subtracts the product of the means from the mean of
+the products, and since both are of the order of the dimension of the algebra
+while their difference, the covariance, can be much smaller, the rounding error
+of the difference is measured against the larger terms.
 
-**Integer images.** When the samples are integers and the number of pixels
-is a power of two, the mean of a band over a block is an exact binary
-fraction, and every centered square of the band has the same low-order bits.
-A long sum of such squares, once it exceeds `2^53` units of those bits,
-rounds in the same direction at every step, so its error grows with the
-length of the sum instead of averaging out. 8-bit images stay below that
-threshold and are summed exactly; 16-bit images do not. This is the cause of
-the larger errors of inazumaQ2n on the `uint16` family, both in its own sums
-and in those of the BLAS library, and of those of the fused sums, whose
-statistics are the same sums. The pairwise sums of the per-pixel
-evaluation are short enough not to be affected, and so are the sums over
-tiles: a block merged from four tiles has a largest error of 16.9 with the
-moments and 13.9 with the fused sums.
+**Integer images.** When the samples are integers and the number of pixels is a
+power of two, the mean of a band over a block is an exact binary fraction, and
+every centered square of the band has the same low-order bits. A long sum of
+such squares, once it exceeds `2^53` units of those bits, rounds in the same
+direction at every step, so its error grows with the length of the sum instead
+of averaging out. 8-bit images stay below that threshold and are summed exactly,
+while 16-bit images do not, which causes the larger errors of inazumaQ2n on the
+`uint16` family, in its own sums, in those of the BLAS library, and in the
+statistics of the fused sums. The pairwise sums of the per-pixel evaluation are
+short enough not to be affected, and so are the sums over tiles: a block merged
+from four tiles has a largest error of 16.9 with the moments and 13.9 with the
+fused sums.
 
-**Guarded blocks.** The fast evaluation relies on identities that hold in
-exact arithmetic but not always in floating point (see
-[Conventions and results](mathematics.md#blocks-evaluated-from-their-normalized-samples)).
-Blocks where they may fail are evaluated again from their normalized
-samples. The study measures inazumaQ2n with and without that second
-evaluation. Both algorithms compute the statistics that the guards test in
-the same way, so they mark the same blocks; the study checks this on every
-case.
+**Guarded blocks.** The fast evaluation relies on identities that hold in exact
+arithmetic but not always in floating point, so the blocks where they may fail
+are evaluated again from their normalized samples (see [Blocks evaluated from
+their normalized
+samples](mathematics.md#blocks-evaluated-from-their-normalized-samples)). Both
+algorithms compute the statistics that the guards test in the same way, so they
+mark the same blocks, which the study checks on every case, and it also measures
+inazumaQ2n without the second evaluation, to show what the guards change.
 
 ## How accuracy was measured
 
-### Exact reference
-
-`tests/exact.py` evaluates the value of a block exactly, without inazumaQ2n
-or pyfastcd arithmetic. It converts every binary64 sample to an integer times
-a power of two, forms the sums, the sums of squares and the cross sums of
-the block in arbitrary-precision integers, decides every branch of the
-definition (a mean of zero, a standard deviation of zero, a variance of zero)
-on these exact values, and evaluates the square roots and quotients with
-decimal arithmetic at 100 significant digits. It derives the signs of the
-algebra from the doubling formula on its own. Before the study runs,
-`benchmarks/stability.py` checks it against a literal evaluation of the
-definition in decimal arithmetic, pixel by pixel with the recursive product,
-on 162 small blocks from nine families; the largest relative difference was
-`6.5e-96`. The study also evaluated one case of every group again at 200
-digits; the largest relative change was `3.3e-99`.
-
 ### Error measures
 
-For a computed block value `q_hat` with exact value `q`, and `u = 2^-53`,
+The value of a block is dimensionless: it is at most one for up to eight bands,
+typical values lie between 0 and 1, and values are compared and reported as
+absolute numbers, so the study measures the absolute error of the value. For a
+computed value `q_hat` with exact value `q`, and with `u = 2^-53` the unit
+roundoff of binary64, it records
 
 ```text
 E_abs = |q_hat - q|
@@ -136,17 +95,30 @@ E_rel = E_abs / q                          (q nonzero)
 eta   = E_abs / u
 ```
 
-The value of a block is dimensionless: it is at most one for up to eight
-bands, typical values lie between 0 and 1, and values are compared and
-reported as absolute numbers. `eta`, the absolute error in units of `u`, is
-therefore the main measure, as the normwise error is for a product in the
-studies of fastCD and pycdloop. The relative error is reported as well; it
-is large where the value itself is small.
+where `eta`, the absolute error in units of `u`, is the main measure, while the
+relative error is reported as well and is large where the value itself is small.
 
-### Methods
+### Exact reference
 
-Every case is one block of `side` by `side` pixels with `B` bands, scored as
-an image of one block. All seven methods read the same stored samples.
+`tests/exact.py` evaluates the value of a block exactly, without inazumaQ2n or
+pyfastcd arithmetic. It converts every binary64 sample to an integer times a
+power of two, forms the sums, the sums of squares, and the cross sums of the
+block in arbitrary-precision integers, decides every branch of the definition (a
+mean of zero, a standard deviation of zero, and a variance of zero) on these
+exact values, and evaluates the square roots and quotients with decimal
+arithmetic at 100 significant digits, while the signs of the algebra used in
+this reference are derived from the doubling formula on their own. Before the
+study runs, `benchmarks/stability.py` checks the reference against a literal
+evaluation of the definition in decimal arithmetic, pixel by pixel with the
+recursive product, on 162 small blocks from nine families, where the largest
+relative difference was `6.5e-96`, and the study also evaluated one case of
+every group again at 200 digits, where the largest relative change was
+`3.3e-99`.
+
+### Methods compared
+
+Every case is one block of `side` by `side` pixels with `B` bands, scored as an
+image of one block, and all seven methods read the same stored samples:
 
 | | Method |
 | --- | --- |
@@ -155,61 +127,74 @@ an image of one block. All seven methods read the same stored samples.
 | T | I with the block merged from four tiles, as for blocks that overlap with a stride of half the block size |
 | G | F with the records and the statistics of the block merged from four tiles |
 | U | I without the second evaluation of the blocks its guards mark |
-| Q | the definition evaluated pixel by pixel, with pyfastcd's quasilinear products |
-| D | the same, with pyfastcd's direct products |
+| Q | the definition evaluated pixel by pixel, with the products of pyfastcd's quasilinear algorithm |
+| D | the same, with the products of pyfastcd's direct algorithm |
 
-Q and D are `benchmarks/baseline.py`, which evaluates the definition in
-NumPy, vectorized over the pixels and the bands of a batch of blocks, with
-every pixel product computed by pyfastcd. inazumaQ2n used NumPy for its matrix
-products, and the kernels of the processor, AVX-512, which give the same bits
-as every other instruction set. Its fused sums are those of the fastCD
-1.5.0 compiled into it, run with fastCD's AVX-512 kernel, which gives the
-same bits as its AVX2 kernel. The comparisons Q and D use the installed
-pyfastcd, an earlier release, for its products only.
+Q and D are `benchmarks/baseline.py`, which evaluates the definition in NumPy,
+vectorized over the pixels and the bands of a batch of blocks, with every pixel
+product computed by [pyfastcd](https://pypi.org/project/pyfastcd), the Python
+package of fastCD. For I, T, and U inazumaQ2n used NumPy for its matrix products
+and the AVX-512 kernels of the processor, which give the same bits as every
+other instruction set, and for F and G the fused sums of the fastCD compiled
+into it, run with fastCD's AVX-512 kernel, which gives the same bits as its AVX2
+kernel.
 
 ### Corpus
 
-The corpus has 8,988 block pairs from 19 families, generated from seeds
-derived from `numpy.random.SeedSequence(20261113, ...)`:
+The corpus has 8,988 block pairs from 19 families, generated from seeds derived
+from `numpy.random.SeedSequence(20261113, ...)`, each family exercising one kind
+of input:
 
-- **Typical:** `uniform`, samples uniform in `[0, 255)` with a test image
-  equal to the reference plus Gaussian noise of standard deviation 20, and
-  `gaussian`, Gaussian bands with their own means and spreads.
-- **Integer:** `uint8` and `uint16`, integer samples over the full range of
-  each type, with rounded noise.
-- **Relations:** `identical`, `affine` (`0.8 x + 2`), `inverted` (`255 - x`)
+- **Typical:** `uniform`, samples uniform in `[0, 255)` with a test image equal
+  to the reference plus Gaussian noise of standard deviation 20, and `gaussian`,
+  Gaussian bands with their own means and spreads.
+- **Integer:** `uint8` and `uint16`, integer samples over the full range of each
+  type, with rounded noise.
+- **Relations:** `identical`, `affine` (`0.8 x + 2`), `inverted` (`255 - x`),
   and `independent` test images.
-- **Means far from zero:** `offset_1e3` to `offset_1e12`, samples equal to
-  the offset plus a uniform variation in `[0, 1)`, so that the mean is about
-  3.5 times the offset times the standard deviation.
+- **Means far from zero:** `offset_1e3` to `offset_1e12`, samples equal to the
+  offset plus a uniform variation in `[0, 1)`, so that the mean is about 3.5
+  times the offset times the standard deviation.
 - **Branches of the definition:** `zero_mean`, reference bands whose mean is
   exactly zero, in random pixel order; `near_zero_mean`, the same with one
   sample changed by a relative `2^-40`; and `constant_integer` and
   `constant_fraction`, a reference band constant at 7 or at 0.1.
 - **Extreme scales:** `scaled_down` (`2^-530`, where products of samples are
-  subnormal), `scaled_up` (`2^490`) and `overflow` (`2^515`, where squares of
+  subnormal), `scaled_up` (`2^490`), and `overflow` (`2^515`, where squares of
   deviations overflow).
 
-The numbers of bands are 1, 2, 3, 4, 5, 8, 16, 32, 64, 128, 159 and 256, with
-blocks of 32 by 32 pixels. Each typical family has 256 cases per number of
-bands up to 16, 64 up to 64 and 16 above, and each other family 32, 8 and 4.
-The typical families were also measured at blocks of 8, 16 and 64 pixels
+The numbers of bands are 1, 2, 3, 4, 5, 8, 16, 32, 64, 128, 159, and 256, with
+blocks of 32 by 32 pixels. Each typical family has 256 cases for each number of
+bands up to 16, 64 up to 64, and 16 above, and each other family 32, 8, and 4,
+while the typical families were also measured at blocks of 8, 16, and 64 pixels
 with 3 and 16 bands, 64 cases each.
 
 ### Host and software
 
-The study ran on 2026-11-21 on an Intel Xeon Gold 6148 under Linux with
-Python 3.14.8, NumPy 2.5.4 and its bundled OpenBLAS, pyfastcd 1.4.0 and
-inazumaQ2n 0.1.0 with fastCD 1.5.0. The record of the study lists the hash
-of every measured source file, of the record of the fastCD sources, of the
-baseline and of the reference. It repeats the corpus of the study of
-2026-11-13, which preceded the fused sums, and every figure of that study
-for I, T, U, Q and D is reproduced exactly.
+The study ran on 2026-11-21 on an Intel Xeon Gold 6148 under Linux with Python
+3.14.8, NumPy 2.5.4 and its bundled OpenBLAS, pyfastcd 1.4.0, and inazumaQ2n
+0.1.0 with fastCD 1.5.0, and its record lists the hash of every measured source
+file, of the record of the fastCD sources, of the baseline, and of the
+reference.
 
-## Accuracy
+## Accuracy of block values
 
-The tables below are generated from the archived results by
-`benchmarks/stability_report.py`.
+The tables below are generated by `benchmarks/stability_report.py` from the
+archived results of the *full profile* of the study, its complete run, as
+opposed to the short smoke profile that only tests the tooling. They report the
+typical inputs at every number of bands, first by absolute and then by relative
+error, then the effect of the block size, of merging a block from tiles, and of
+the fused sums against the moments, and finally every family at 4 and at 16
+bands, and the families that strain the definition, pooled over the numbers of
+bands.
+
+In every table, a cell of the form "I / F / Q / D" gives one statistic for each
+of the methods named, "p99" is the 99th percentile, and a column "I at least as
+accurate as F / Q / D" gives the fraction of cases in which the exact error of I
+is no larger than that of each other method. "F as accurate as I" gives the
+fraction in which the two errors are equal, "marked" counts the blocks that the
+guards mark, and "results off by more than 1e-06" counts values that are wrong
+rather than merely inaccurate.
 
 <!-- BEGIN STABILITY ACCURACY -->
 
@@ -349,179 +334,199 @@ The archived CSV summary also gives, for every family, band count, block size an
 
 ### Reading the tables
 
-**Typical inputs.** Up to four bands, where inazumaQ2n forms its moments in
-one pass over each tile without a matrix product, its median error is about
-1, against 1.5 to 1.9 for the per-pixel evaluation, and it is at least as
-accurate in 65% to 74% of the blocks. From five bands on, where the moments
-come from a sequential sum and a matrix product, its median error is 1.5 to
-4.3, against 1.1 to 2.5, and it is at least as accurate in 25% to 58% of the
-blocks. All of these are a few units in the last place: the largest relative
-error of inazumaQ2n on typical inputs is `1.8e-15`.
+**Typical inputs.** Up to four bands, where inazumaQ2n forms its moments in one
+pass over each tile without a matrix product, its median error is about 1,
+against 1.5 to 1.9 for the per-pixel evaluation, and it is at least as accurate
+in 65% to 74% of the blocks. From five bands on, where the moments come from a
+sequential sum and a matrix product, its median error is 1.5 to 4.3, against 1.1
+to 2.5, and it is at least as accurate in 25% to 58% of the blocks. All of these
+are a few units in the last place: the largest relative error of inazumaQ2n on
+typical inputs is `1.8e-15`.
 
-**Fused sums.** From five bands on, the median error of the fused sums is
-1.4 to 3.3, below that of the moments at every band count but 32 and 159,
-and close to that of the per-pixel evaluation up to 64 bands. They are at
-least as accurate as the moments in 59% to 79% of the blocks, and their
-largest error, 13.5, is below the 15.9 of the moments. With one to four
-bands the order is reversed: there the moments come from the eight-lane
-kernel and have a median error of about 1, and the fused sums, whose
-statistics are sequential sums over the whole block, 2.0 to 4.0. `auto`
-uses the moments for those images whatever the processor. The two
-algorithms return the same bits in 17% of the typical blocks.
+**Fused sums.** From five bands on, where `algorithm="auto"` can select them,
+the median error of the fused sums is 1.4 to 3.3, below that of the moments at
+every number of bands but 32 and 159, and close to that of the per-pixel
+evaluation up to 64 bands. They are at least as accurate as the moments in 59%
+to 79% of the blocks, and their largest error, 13.5, is below the 15.9 of the
+moments. With one to four bands the order is reversed, because there the moments
+come from the eight-lane kernel and have a median error of about 1, while the
+fused sums, whose statistics are sequential sums over the whole block, have 2.0
+to 4.0, which is why `auto` uses the moments for those images on every
+processor. The two algorithms return the same bits in 17% of the typical blocks.
 
 **Block size.** From 8 by 8 to 64 by 64 pixels, the median error of the
-per-pixel evaluation stays between 1.5 and 2.0. That of inazumaQ2n stays
-about 1 with 3 bands and grows from 1.2 to 2.1 with 16, where its sums run
-over all the pixels of a tile. That of the fused sums grows with the block
-for the same reason, from 1.0 to 4.2 with 3 bands and from about 1 to 2.3
-with 16.
+per-pixel evaluation stays between 1.5 and 2.0. That of inazumaQ2n stays about 1
+with 3 bands and grows from 1.2 to 2.1 with 16 bands, where its sums run over
+all the pixels of a tile, and that of the fused sums grows with the block for
+the same reason, from 1.0 to 4.2 with 3 bands and from about 1 to 2.3 with 16.
 
-**Tiles.** Merging a block from four tiles changes its value in the last
-bits in 80% of the blocks. Up to 16 bands T is as accurate as I or more; from
-32 bands on its median error is 1.1 to 1.6 times that of I. With the fused
-sums the merged block is the more accurate at every band count: the median
-error of G is 1.1 to 2.9, against 1.4 to 4.0 for F, since its statistics
-are sums over a quarter of the pixels, merged, and its sum of products is
-the same.
+**Tiles.** Merging a block from four tiles changes its value in the last bits in
+80% of the blocks. Up to 16 bands T is as accurate as I or more, and from 32
+bands on its median error is 1.1 to 1.6 times that of I. With the fused sums the
+merged block is the more accurate at every number of bands, the median error of
+G being 1.1 to 2.9 against 1.4 to 4.0 for F, since its statistics are sums over
+a quarter of the pixels, merged, and its sum of products is the same.
 
-**Families.** inazumaQ2n scores an image against itself as exactly one in
-most blocks, 87% with the moments; a fused sum does not see that its two
-operands are equal, and returns exactly one in 15% of them and a value
-within 21 units of it in the rest, with a median error of 2. On
-independent images, where the value is small, the error of either algorithm
-is several times smaller than that of the per-pixel evaluation up to 64
-bands, since neither subtracts the product of the means from the mean of
-the products. The `uint16` family is the exception described in
-[Where rounding enters](#where-rounding-enters).
+**Families.** inazumaQ2n scores an image against itself as exactly one in most
+blocks, 87% with the moments, while a fused sum does not see that its two
+operands are equal and returns exactly one in 15% of them and a value within 21
+units of it in the rest, with a median error of 2. On independent images, where
+the value is small, the error of either algorithm is several times smaller than
+that of the per-pixel evaluation up to 64 bands, since neither subtracts the
+product of the means from the mean of the products. The `uint16` family is the
+exception described in [Where rounding enters](#where-rounding-enters).
 
-**Means far from zero.** The value of a block whose mean is far larger than
-its variation is sensitive to every rounding of the samples, and every method
-loses accuracy roughly in proportion to the ratio. With its guard,
-inazumaQ2n evaluates such blocks from their normalized samples, centered
-before they are multiplied, and from an offset of `10^6` on its median error
-is 14 to 21 times smaller than that of the per-pixel evaluation. Without the
-guard (U) it would be 500 to 2,500 times larger than with it. The fused
-sums are behind the same guard, and their values on these families are
-those of I, bit for bit.
+**Means far from zero.** The value of a block whose mean is far larger than its
+variation is sensitive to every rounding of the samples, so every method loses
+accuracy roughly in proportion to the ratio. With its guard, inazumaQ2n
+evaluates such blocks from their normalized samples, centered before they are
+multiplied, and from an offset of `10^6` on its median error is 14 to 21 times
+smaller than that of the per-pixel evaluation, while without the guard (U) it
+would be 500 to 2,500 times larger than with it. The fused sums are behind the
+same guard, and their values on these families are those of I, bit for bit.
 
 **Branches of the definition.** A reference band whose mean is exactly zero
-changes the normalization of the test band, so the value is discontinuous
-there. A floating-point mean of samples whose exact mean is zero is rarely
-exactly zero, so the per-pixel evaluation takes the wrong branch in 248 of
-252 blocks, an error of order one. inazumaQ2n decides the branch on the
-correctly rounded sum of the band, which is zero exactly when the exact sum
-is, and takes the right branch in every block. With a mean merely close to
-zero, every method takes the right branch except in a few blocks whose
-floating-point mean happens to be exactly zero.
+changes the normalization of the test band, so the value is discontinuous there.
+A floating-point mean of samples whose exact mean is zero is rarely exactly
+zero, so the per-pixel evaluation takes the wrong branch in 248 of 252 blocks,
+an error of order one, whereas inazumaQ2n decides the branch on the correctly
+rounded sum of the band, which is zero exactly when the exact sum is, and takes
+the right branch in every block. With a mean merely close to zero, every method
+takes the right branch except in a few blocks whose floating-point mean happens
+to be exactly zero.
 
 **Constant bands.** The value of a block with a constant reference band is
-determined, the standard deviation being replaced by the machine epsilon,
-and every method computed it in this corpus. The value changes completely,
-however, if one sample of the band changes by a single rounding error, which
-makes its standard deviation a tiny number instead of the machine epsilon.
-Such blocks should not be relied on, in this package or in any evaluation
-of the definition.
+determined, the standard deviation being replaced by the machine epsilon, and
+every method computed it in this corpus. The value changes completely, however,
+if one sample of the band changes by a single rounding error, which makes its
+standard deviation a tiny number instead of the machine epsilon, so such blocks
+should not be relied on, in this package or in any evaluation of the definition.
 
-**Extreme scales.** The value does not depend on a common scale of the
-images. When products of samples are subnormal, the standard deviations of
-the per-pixel evaluation lose precision, and its median error is 7,500.
-When squares of deviations overflow, its standard deviations are infinite
-and every value it returns is one. inazumaQ2n computes the standard
-deviations of such blocks from samples scaled by a power of two, and its
-median errors are 1.9 and 2.1.
+**Extreme scales.** The value does not depend on a common scale of the images.
+When products of samples are subnormal, the standard deviations of the per-pixel
+evaluation lose precision, and its median error is 7,500, and when squares of
+deviations overflow, its standard deviations are infinite and every value it
+returns is one. inazumaQ2n computes the standard deviations of such blocks from
+samples scaled by a power of two, and its median errors are 1.9 and 2.1.
 
-## What is identical bit for bit
+## Which results are identical bit for bit
 
-- **Instruction sets.** The compiled kernels give the same bits with
-  AVX-512, with AVX2, with NEON and with the baseline code. The kernels for
-  at most four bands achieve this by construction, with eight fixed lanes
-  and a fixed order of reduction; the centering kernel has no dependence
-  between the bands it handles together. The tests compare every
-  instruction set the processor supports, and a freestanding build of the
-  kernels was run under emulation of AArch64 and gave the same checksum as
-  on x86-64.
-- **Sample types.** An image of `uint8`, `uint16` or `float32` samples gives
-  the same bits as its conversion to `float64`, because each sample is
-  converted exactly before any arithmetic.
+Scores computed on different machines, or with different options, can be
+compared to the last digit only where they are identical bit for bit, and the
+kernels are written so that most properties of the machine do not change the
+result, while a few choices do.
+
+### Identical
+
+- **Instruction sets.** The compiled kernels give the same bits with AVX-512,
+  with AVX2, with NEON, and with the baseline code. The kernels for at most four
+  bands achieve this by construction, with eight fixed lanes and a fixed order
+  of reduction, and the centering kernel has no dependence between the bands it
+  handles together. The tests compare every instruction set the processor
+  supports, and a freestanding build of the kernels was run under emulation of
+  AArch64 and gave the same checksum as on x86-64.
+- **Sample types.** An image of `uint8`, `uint16`, or `float32` samples gives
+  the same bits as its conversion to `float64`, because each sample is converted
+  exactly before any arithmetic.
 - **Workers and plans.** The number of workers, the size of the batches of
-  tiles and the reuse of a plan do not change the result. With the fused
-  sums, neither does the width of the strips of blocks that share tiles.
-- **The vector kernels of fastCD.** fastCD runs its fused sums with an
-  AVX-512 or an AVX2 kernel, which perform the same operations in the same
-  order. Builds restricted to each gave the same bits on this processor,
-  for blocks with and without overlap, so a build that contains them, as
-  those with GCC or Clang do, gives the same values with
-  `algorithm="fastcd"` on every x86-64 processor with AVX2 and FMA.
+  tiles, and the reuse of a plan do not change the result, and with the fused
+  sums neither does the width of the strips of blocks that share tiles.
+- **The vector kernels of fastCD.** fastCD runs its fused sums with an AVX-512
+  or an AVX2 kernel, which perform the same operations in the same order. Builds
+  restricted to each gave the same bits on the host of the study, for blocks
+  with and without overlap, so a build that contains them, as those with GCC or
+  Clang do, gives the same values with `algorithm="fastcd"` on every x86-64
+  processor with AVX2 and FMA.
 
-For images with at most four bands, on a processor with a fused
-multiply-add instruction, these together mean that the value of every block
-that is not evaluated a second time is the same on every machine. The index
-is the mean of the block values, taken by NumPy.
+For images with at most four bands, on a processor with a fused multiply-add
+instruction, these together mean that the value of every block that is not
+evaluated a second time is the same on every machine, and the index is the mean
+of the values of the blocks, taken by NumPy.
 
-## What is not
+### Not identical
 
 - **The algorithm.** The moments and the fused sums round differently, and
-  `algorithm="auto"` selects between them by the number of bands, the
-  overlap of the blocks and the kernel that fastCD runs on the processor.
-  Pass `algorithm="moments"` or `algorithm="fastcd"` to keep one.
-- **The portable kernel of fastCD.** Where fastCD has no vector kernel, and
-  the processor no fused multiply-add instruction, its fused sums round
-  products and sums separately, and the values differ in the last digits
-  from those of its vector kernels.
-- **The matrix-product library.** With the moments and more than four bands
-  the cross moments are a matrix product, whose order of summation belongs
-  to the library. NumPy with OpenBLAS and MKL, different versions of either, and
-  different processors can differ in the last digits. Pass
-  `backend="numpy"` to keep one library; that fixes the library but not its
-  internal choices.
-- **Tiles.** With `ws` a multiple of `stride` the moments of a block are
-  merged from its tiles, and otherwise computed in one piece. The two differ
-  in rounding. So do the fused sums, whose statistics are merged from the
-  tiles in the same way.
-- **Processors without a fused multiply-add.** On x86-64 processors that
-  lack AVX2 or FMA, images with at most four bands take the route through a
-  matrix product, which rounds differently from the kernels.
+  `algorithm="auto"` selects between them by the number of bands, the overlap of
+  the blocks, and the kernel that fastCD runs on the processor, so
+  `algorithm="moments"` or `algorithm="fastcd"` keeps one.
+- **The portable kernel of fastCD.** Where fastCD has no vector kernel, and the
+  processor no fused multiply-add instruction, its fused sums round products and
+  sums separately, and the values differ in the last digits from those of its
+  vector kernels.
+- **The matrix-product library.** With the moments and more than four bands the
+  cross moments are a matrix product, whose order of summation belongs to the
+  library, so NumPy with OpenBLAS and MKL, different versions of either, and
+  different processors can differ in the last digits. `backend="numpy"` keeps
+  one library, which fixes the library but not its internal choices.
+- **Tiles.** With `ws` a multiple of `stride` the moments of a block are merged
+  from its tiles, and otherwise computed in one piece, and the two differ in
+  rounding, as do the fused sums, whose statistics are merged from the tiles in
+  the same way.
+- **Processors without a fused multiply-add.** On x86-64 processors that lack
+  AVX2 or FMA, images with at most four bands take the route through a matrix
+  product, which rounds differently from the kernels.
 
-## Values that are not finite
+## What this means for your code
 
-A block that contains a NaN or an infinity has the value NaN, and the index
-of the image is then NaN. No exception is raised. Samples whose sum over a
-block overflows, above about `10^308` divided by the number of pixels, are
-outside the range of the package.
-
-## Recommendations
-
-- Read Q2n values to a few digits: on ordinary images every method in the
-  study agrees with the exact value to about `10^-14` or better, and
-  differences beyond that are rounding, not quality.
-- Expect identical bits only from the same library and route, as listed
-  above, and compare scores across machines to a tolerance.
-- Avoid blocks whose reference is constant, as in masked or synthetic
+- **Read Q2n values to a few digits.** On ordinary images every method in the
+  study agrees with the exact value to about `10^-14` or better, and differences
+  beyond that are rounding, not quality.
+- **Expect identical bits only from the same route and library,** as listed
+  above, and compare scores across machines with a tolerance.
+- **Avoid blocks whose reference is constant,** as in masked or synthetic
   images, or treat their values as undetermined.
-- For images whose values lie far from zero compared with their variation,
-  such as a small signal on a large offset, subtracting a constant from both
-  images before scoring does not change the value of the index, except
-  through the zero-mean branch, and improves its accuracy in every
-  implementation.
+- **Subtract a large common offset first.** For images whose values lie far from
+  zero compared with their variation, such as a small signal on a large offset,
+  subtracting a constant from both images before scoring does not change the
+  value of the index, except through the zero-mean branch, and improves its
+  accuracy in every implementation.
+- **Keep images finite and within range.** A block that contains a NaN or an
+  infinity has the value NaN, and so has the index, with no exception raised,
+  and samples whose sum over a block overflows, above about `10^308` divided by
+  the number of pixels, are outside the range of the package.
 
-## Archive
+## Limitations
+
+- The study is empirical: its medians and maxima describe this corpus, not all
+  inputs, and no bound on the error of either algorithm is proved. Only the
+  typical groups through 64 bands, the block sizes, and the families pooled over
+  the numbers of bands have 100 cases or more, and the other groups are too
+  small to estimate tails.
+- Blocks of 8 to 64 pixels with 1 to 256 bands were measured, and blocks merged
+  from four tiles only, so overlaps that merge a block from more tiles were not
+  measured.
+- The matrix products of the moments were computed by NumPy with OpenBLAS and
+  the fused sums by the AVX-512 kernel of fastCD, so the accuracy with MKL, or
+  with the portable kernel of fastCD, was not measured.
+- Every case is a single block, so the mean that forms the index from the values
+  of the blocks is not part of the measurement.
+
+## Checking and reproducing the results
 
 The study is archived in
-[benchmark-results/stability-20261121/](../benchmark-results/stability-20261121/):
-its record `study.json`, the summary tables and key figures, the charts in
-PNG, SVG and PDF, and `SHA256SUMS`. The raw per-case results stay on the
-machine that ran the study and are not distributed; every case records its
-seed and the SHA-256 of its samples, from which the samples can be generated
-again. `tools/check_archives.py` checks the archive against its checksums
-and the tables on this page against the archive. The study of 2026-11-13,
-made before the fused sums, is kept in
-[benchmark-results/stability-20261113/](../benchmark-results/stability-20261113/).
+[benchmark-results/stability-20261121/](../benchmark-results/stability-20261121/)
+with its record `study.json`, the summary tables and key figures, the charts in
+PNG, SVG, and PDF, and `SHA256SUMS`, while the raw per-case results are not
+distributed; every case records its seed and the SHA-256 of its samples, from
+which the samples can be generated again.
 
-To run the study, install the `benchmark` extras and run:
+To check the study, run from the repository root:
+
+```sh
+python tools/check_archives.py
+```
+
+The checker uses only the Python standard library. It compares every published
+file with `SHA256SUMS` and checks that the tables on this page are the tables of
+the study, and with `--full` it also requires the raw files, checks them against
+their recorded hashes, and regenerates the tables from them, which needs NumPy.
+
+To repeat the study, install the `benchmark` extras and run:
 
 ```sh
 python benchmarks/stability_study.py --profile full --jobs 8 --update-docs
 ```
 
-`--profile smoke` runs one case of every family at small sizes in seconds,
-to test the tooling.
+`--profile smoke` runs one case of every family at small sizes in seconds, to
+test the tooling, and `--update-docs` rewrites the tables on this page from the
+new results.
